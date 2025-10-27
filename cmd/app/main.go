@@ -28,8 +28,8 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "app",
-	Short: "Process manager with TUI support",
+	Use:   "op",
+	Short: "Opperator",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Check if this is the first run (unless skipped)
 		if !skipOnboarding && onboarding.IsFirstRun() {
@@ -578,7 +578,7 @@ var versionUpdateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\n✓ Successfully updated to version %s\n", info.LatestVersion)
-		fmt.Println("Please restart the application for the changes to take effect")
+		fmt.Println("Please restart Opperator for the changes to take effect")
 	},
 }
 

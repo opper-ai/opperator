@@ -190,7 +190,7 @@ else
 fi
 
 print_message info ""
-print_message info "ℹ Run $(colorize "curl -fsSL https://opencode.ai/install | bash") to reinstall."
+print_message info "ℹ Run $(colorize "curl -fsSL https://opper.ai/opperator-install | bash") to reinstall."
 
 print_message info ""
 print_message success "✔︎ Uninstall complete."
