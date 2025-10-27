@@ -274,6 +274,15 @@ resolve_version() {
   fi
 }
 
+stop_daemon() {
+  if command -v "$APP" >/dev/null 2>&1; then
+    print_message info "Checking for running daemon..."
+    if "$APP" daemon stop 2>/dev/null; then
+      print_message info "✔︎ Stopped running daemon"
+    fi
+  fi
+}
+
 check_installed_version() {
   if [[ -f "$VERSION_FILE" ]]; then
     local installed_version
@@ -290,7 +299,8 @@ check_installed_version() {
 
       case "$answer" in
         [yY][eE][sS]|[yY])
-          print_message info "Reinstalling Opperator ${specific_version}" 
+          print_message info "Reinstalling Opperator ${specific_version}"
+          stop_daemon
           return
           ;;
         *)
@@ -301,10 +311,12 @@ check_installed_version() {
     fi
 
     print_message warning "Existing installation detected: ${installed_version} (will be replaced)"
+    stop_daemon
   elif command -v "$APP" >/dev/null 2>&1; then
     local existing_path
     existing_path=$(command -v "$APP")
     print_message warning "Opperator already present at ${existing_path}; version unknown and will be replaced"
+    stop_daemon
   fi
 }
 

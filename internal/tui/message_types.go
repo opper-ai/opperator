@@ -242,7 +242,7 @@ func (m *Model) restoreAsyncTasksCmd() tea.Cmd {
 
 func (m *Model) checkForUpdatesCmd() tea.Cmd {
 	return func() tea.Msg {
-		info, err := updater.CheckForUpdates()
+		info, err := updater.CheckForUpdates(false) // Don't include pre-releases in automatic checks
 		if err != nil {
 			// Silently fail - don't disrupt user experience if check fails
 			return updateCheckMsg{available: false, err: err}

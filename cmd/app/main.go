@@ -23,7 +23,6 @@ import (
 )
 
 var (
-	skipOnboarding    bool
 	tuiCPUProfilePath string
 )
 
@@ -31,8 +30,8 @@ var rootCmd = &cobra.Command{
 	Use:   "op",
 	Short: "Opperator",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Check if this is the first run (unless skipped)
-		if !skipOnboarding && onboarding.IsFirstRun() {
+		// Check if this is the first run
+		if onboarding.IsFirstRun() {
 			fmt.Println("Welcome to Opperator! Let's get you set up.")
 			if err := onboarding.RunWizard(); err != nil {
 				log.Fatalf("Setup failed: %v", err)
@@ -526,8 +525,9 @@ var versionCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check for available updates",
 	Run: func(cmd *cobra.Command, args []string) {
+		includePrerelease, _ := cmd.Flags().GetBool("pre-release")
 		fmt.Println("Checking for updates...")
-		info, err := updater.CheckForUpdates()
+		info, err := updater.CheckForUpdates(includePrerelease)
 		if err != nil {
 			// Handle "no releases" gracefully
 			if strings.Contains(err.Error(), "no releases found") {
@@ -556,8 +556,9 @@ var versionUpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update to the latest version",
 	Run: func(cmd *cobra.Command, args []string) {
+		includePrerelease, _ := cmd.Flags().GetBool("pre-release")
 		fmt.Println("Checking for updates...")
-		info, err := updater.CheckForUpdates()
+		info, err := updater.CheckForUpdates(includePrerelease)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error checking for updates: %v\n", err)
 			os.Exit(1)
@@ -606,7 +607,6 @@ func init() {
 	// Disable the default completion command
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
-	rootCmd.PersistentFlags().BoolVar(&skipOnboarding, "skip-onboarding", false, "Skip the onboarding wizard")
 	rootCmd.Flags().StringVar(&tuiCPUProfilePath, "tui-cpuprofile", "", "Write TUI CPU profile to file")
 	stopCmd.Flags().BoolP("all", "a", false, "Stop all agents")
 	logsCmd.Flags().BoolP("follow", "f", false, "Follow log output (stream mode)")
@@ -662,6 +662,8 @@ func init() {
 	asyncCmd.AddCommand(asyncDeleteCmd)
 
 	// Add version subcommands
+	versionCheckCmd.Flags().Bool("pre-release", false, "Include pre-release versions")
+	versionUpdateCmd.Flags().Bool("pre-release", false, "Include pre-release versions")
 	versionCmd.AddCommand(versionShowCmd)
 	versionCmd.AddCommand(versionCheckCmd)
 	versionCmd.AddCommand(versionUpdateCmd)

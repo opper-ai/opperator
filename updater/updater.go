@@ -49,11 +49,11 @@ type UpdateInfo struct {
 }
 
 // CheckForUpdates checks if a new version is available
-func CheckForUpdates() (*UpdateInfo, error) {
+func CheckForUpdates(includePrerelease bool) (*UpdateInfo, error) {
 	currentVersion := version.Get()
 
 	// Fetch latest release from GitHub
-	release, err := fetchLatestRelease()
+	release, err := fetchLatestRelease(includePrerelease)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
@@ -93,7 +93,7 @@ func CheckForUpdates() (*UpdateInfo, error) {
 }
 
 // fetchLatestRelease fetches the latest release from GitHub API
-func fetchLatestRelease() (*Release, error) {
+func fetchLatestRelease(includePrerelease bool) (*Release, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -105,9 +105,9 @@ func fetchLatestRelease() (*Release, error) {
 	}
 	defer resp.Body.Close()
 
-	// If 404, try fetching all releases (including pre-releases)
+	// If 404, try fetching all releases
 	if resp.StatusCode == http.StatusNotFound {
-		return fetchLatestFromAllReleases(client)
+		return fetchLatestFromAllReleases(client, includePrerelease)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -120,11 +120,23 @@ func fetchLatestRelease() (*Release, error) {
 		return nil, err
 	}
 
+	// If we want pre-releases, check all releases for a newer one
+	if includePrerelease {
+		allRelease, err := fetchLatestFromAllReleases(client, true)
+		if err == nil && allRelease != nil {
+			// Compare and return the newer one
+			newer, _ := isNewerVersion(release.TagName, allRelease.TagName)
+			if newer {
+				return allRelease, nil
+			}
+		}
+	}
+
 	return &release, nil
 }
 
 // fetchLatestFromAllReleases fetches all releases and returns the most recent one
-func fetchLatestFromAllReleases(client *http.Client) (*Release, error) {
+func fetchLatestFromAllReleases(client *http.Client, includePrerelease bool) (*Release, error) {
 	resp, err := client.Get(githubReleasesURL)
 	if err != nil {
 		return nil, err
@@ -149,7 +161,17 @@ func fetchLatestFromAllReleases(client *http.Client) (*Release, error) {
 		return nil, fmt.Errorf("no releases found on GitHub")
 	}
 
-	// Return the first release (most recent)
+	// If not including pre-releases, find the first stable release
+	if !includePrerelease {
+		for _, release := range releases {
+			if !release.Prerelease {
+				return &release, nil
+			}
+		}
+		return nil, fmt.Errorf("no stable releases found on GitHub")
+	}
+
+	// Return the first release (most recent, including pre-releases)
 	return &releases[0], nil
 }
 
