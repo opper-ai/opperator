@@ -253,10 +253,9 @@ resolve_version() {
   else
     print_message info "Resolving latest release from GitHub"
     if ! release_data=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null); then
-      print_message warning "No stable release found; falling back to most recent release (including pre-releases)"
-      if ! release_data=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" 2>/dev/null); then
-        fail "Failed to fetch release metadata from GitHub"
-      fi
+      print_message error "No stable release found. Please specify a version with VERSION=<version>"
+      print_message info "Example: curl -fsSL http://opper.ai/opperator-install | VERSION=v0.1.0-alpha bash"
+      return 1
     fi
   fi
 

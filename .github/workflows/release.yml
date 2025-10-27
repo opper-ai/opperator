@@ -11,6 +11,11 @@ on:
         description: 'Version to release (e.g., 0.1.0-alpha, 1.0.0)'
         required: true
         type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -63,38 +68,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
-          name: Release ${{ steps.version.outputs.VERSION }}
+          name: ${{ steps.version.outputs.VERSION }}
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.VERSION, 'alpha') || contains(steps.version.outputs.VERSION, 'beta') || contains(steps.version.outputs.VERSION, 'rc') }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || (contains(steps.version.outputs.VERSION, 'alpha') || contains(steps.version.outputs.VERSION, 'beta') || contains(steps.version.outputs.VERSION, 'rc')) }}
+          generate_release_notes: true
           files: |
             dist/${{ steps.version.outputs.VERSION }}/*.tar.gz
             dist/${{ steps.version.outputs.VERSION }}/*.zip
             dist/${{ steps.version.outputs.VERSION }}/SHA256SUMS
-          body: |
-            ## Opperator ${{ steps.version.outputs.VERSION }}
-
-            ### Installation
-
-            Download the appropriate archive for your platform:
-            - **macOS (Intel)**: `opperator-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz`
-            - **macOS (Apple Silicon)**: `opperator-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz`
-            - **Linux (x86_64)**: `opperator-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz`
-            - **Linux (ARM64)**: `opperator-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz`
-
-            ### Verify checksums
-            ```bash
-            sha256sum -c SHA256SUMS
-            ```
-
-            ### Extract and install
-            ```bash
-            tar -xzf opperator-${{ steps.version.outputs.VERSION }}-*.tar.gz
-            chmod +x opperator-${{ steps.version.outputs.VERSION }}-*
-            sudo mv opperator-${{ steps.version.outputs.VERSION }}-* /usr/local/bin/opperator
-            ```
-
-            ---
-
-            **Full Changelog**: https://github.com/${{ github.repository }}/commits/${{ steps.version.outputs.VERSION }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
