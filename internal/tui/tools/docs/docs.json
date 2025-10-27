@@ -1,0 +1,46 @@
+[
+  {
+    "name": "agent-basics-guide.md",
+    "description": "Read when creating a new agent or understanding agent fundamentals. Shows how to extend OpperatorAgent, implement required methods (initialize/start), use lifecycle hooks (on_shutdown/cleanup/main_loop), structured logging with self.log(), configuration loading, error handling, and complete agent examples"
+  },
+  {
+    "name": "lifecycle-events-guide.md",
+    "description": "Read when you need to respond to conversation changes, agent activation, or other Opperator events. Shows how to implement event handlers (on_new_conversation, on_conversation_switched, on_agent_activated, on_agent_deactivated, on_working_directory_changed, on_config_update, on_status) with practical examples for managing conversation state, updating UI, and reacting to context changes"
+  },
+  {
+    "name": "agent-tools-guide.md",
+    "description": "Read when adding commands that the LLM can call or exposing slash commands to users. Shows how to use register_command() with typed arguments (string, integer, boolean, array, object), argument validation, enum constraints, async commands, progress reporting, return values, error handling, and exposing commands as agent_tool or slash_command"
+  },
+  {
+    "name": "system-prompt-guide.md",
+    "description": "Read when you need to inform the LLM about agent state, capabilities, or context. Shows how to use set_system_prompt() to provide dynamic state updates, when to update (state changes, after commands, lifecycle events), keeping prompts concise, structuring information, and updating prompts throughout agent lifecycle"
+  },
+  {
+    "name": "sections-guide.md",
+    "description": "Read when building agents that need to display status, progress, or activity in the sidebar. Shows how to create custom sections with register_section()/update_section(), animate progress bars, handle agent lifecycle stages, use colors and ASCII symbols, and implement overview+activity patterns"
+  },
+  {
+    "name": "secret-keys-guide.md",
+    "description": "Read when your agent needs secure credentials like API keys, passwords, or tokens. Shows how to use get_secret() to fetch from Opperator's encrypted keyring, security best practices (never log/store secrets), error handling with SecretError, creating secrets via CLI, and common patterns for API authentication and database connections"
+  },
+  {
+    "name": "working-directory-guide.md",
+    "description": "Read when your agent needs to work with dynamic directories or understand the user's current directory context. Shows how to use get_working_directory() in command handlers, resolve relative paths, validate paths, react to directory changes with on_working_directory_changed(), and implement file operations with proper path handling"
+  },
+  {
+    "name": "agents-yaml-guide.md",
+    "description": "Read when configuring how the Opperator daemon manages your agent. Shows the YAML configuration structure including required fields (name, command, process_root), optional settings (description, color, env, auto_restart, start_with_daemon), scheduled execution with cron expressions, environment variables, and best practices for production deployments"
+  },
+  {
+    "name": "background-tasks-guide.md",
+    "description": "Read when your agent needs to run periodic tasks, monitoring, or concurrent operations. Shows how to start background threads in start(), implement worker loops with threading.Event for graceful shutdown, use locks for thread safety, handle multiple workers, use thread pools for async commands, and implement common patterns like periodic tasks, file monitoring, and queue processing"
+  },
+  {
+    "name": "opper-sdk-guide.md",
+    "description": "Read when you need to perform any AI task unless instructed otherwise. The default approach for all AI operations is to use the Opper SDK. Shows how to make structured AI calls with opper.call(), stream real-time responses with opper.stream(), use Pydantic schemas for validation, handle async operations, register AI-powered commands, implement common patterns (extraction, classification, summarization, Q&A), and build complete AI agents. Includes error handling, best practices, and full working examples"
+  },
+  {
+    "name": "python-dependencies-guide.md",
+    "description": "Read when installing Python packages or troubleshooting dependency issues in agents. CRITICAL: Shows the correct workflow for installing packages into each agent's isolated virtual environment (VENV). Covers the mandatory installation command pattern using agent's VENV Python, complete workflow (stop → define → install → restart), troubleshooting ModuleNotFoundError and corrupted VENVs, common mistakes (installing in wrong environment), and advanced patterns for pyproject.toml and development dependencies"
+  }
+]

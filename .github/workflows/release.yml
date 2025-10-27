@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0-alpha, 1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Extract version from tag (remove 'v' prefix if present)
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+
+      - name: Build release artifacts
+        run: |
+          chmod +x ./scripts/release.sh
+          ./scripts/release.sh "${{ steps.version.outputs.VERSION }}"
+
+      - name: List artifacts
+        run: |
+          ls -lah dist/${{ steps.version.outputs.VERSION }}/
+          echo "---"
+          cat dist/${{ steps.version.outputs.VERSION }}/SHA256SUMS || echo "No checksums file"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, 'alpha') || contains(steps.version.outputs.VERSION, 'beta') || contains(steps.version.outputs.VERSION, 'rc') }}
+          files: |
+            dist/${{ steps.version.outputs.VERSION }}/*.tar.gz
+            dist/${{ steps.version.outputs.VERSION }}/*.zip
+            dist/${{ steps.version.outputs.VERSION }}/SHA256SUMS
+          body: |
+            ## Opperator ${{ steps.version.outputs.VERSION }}
+
+            ### Installation
+
+            Download the appropriate archive for your platform:
+            - **macOS (Intel)**: `opperator-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz`
+            - **macOS (Apple Silicon)**: `opperator-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz`
+            - **Linux (x86_64)**: `opperator-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz`
+            - **Linux (ARM64)**: `opperator-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz`
+
+            ### Verify checksums
+            ```bash
+            sha256sum -c SHA256SUMS
+            ```
+
+            ### Extract and install
+            ```bash
+            tar -xzf opperator-${{ steps.version.outputs.VERSION }}-*.tar.gz
+            chmod +x opperator-${{ steps.version.outputs.VERSION }}-*
+            sudo mv opperator-${{ steps.version.outputs.VERSION }}-* /usr/local/bin/opperator
+            ```
+
+            ---
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/commits/${{ steps.version.outputs.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
