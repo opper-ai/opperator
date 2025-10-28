@@ -113,10 +113,14 @@ func (a *asyncTracker) stream(state *watchState) bool {
 	defer cancel()
 	for ev := range events {
 		if !a.handleStreamEvent(state, ev) {
+			// Event handler returned false, indicating task completed/failed
 			return true
 		}
 	}
-	return true
+	// Stream closed without handling a completion event
+	// This can happen if the task completed before the stream opened
+	// Return false so polling can detect the final status
+	return false
 }
 
 func (a *asyncTracker) handleStreamEvent(state *watchState, ev tooling.AsyncTaskEvent) bool {

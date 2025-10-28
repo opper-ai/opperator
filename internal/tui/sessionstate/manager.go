@@ -625,10 +625,18 @@ func (m *Manager) ToolResultHandled(ctx context.Context, sessionID, callID strin
 	if sessionID == "" || callID == "" {
 		return false
 	}
-	if sessionID == m.activeSessionID {
+
+	// Check in-memory state first (fast path for active session)
+	m.mu.Lock()
+	isActive := sessionID == m.activeSessionID
+	if isActive {
 		_, ok := m.handledToolResults[callID]
+		m.mu.Unlock()
 		return ok
 	}
+	m.mu.Unlock()
+
+	// For non-active sessions, query the database
 	if m.msgStore == nil {
 		return false
 	}
@@ -659,19 +667,29 @@ func (m *Manager) MarkToolResultHandled(ctx context.Context, sessionID, callID s
 	if sessionID == "" || callID == "" {
 		return
 	}
+
+	// Check if already handled to avoid duplicate system messages
 	if m.ToolResultHandled(ctx, sessionID, callID) {
 		return
 	}
+
+	// Update in-memory map for active session
+	m.mu.Lock()
 	if sessionID == m.activeSessionID {
 		if m.handledToolResults == nil {
 			m.handledToolResults = make(map[string]struct{})
 		}
 		m.handledToolResults[callID] = struct{}{}
 	}
+	m.mu.Unlock()
+
+	// Persist to database
 	if m.msgStore == nil {
 		return
 	}
 	text := handledToolResultSystemText(callID)
+	// Create system message to persist the handled state
+	// This ensures on restart, the result is still marked as handled
 	_, _ = m.msgStore.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:  message.System,
 		Parts: []message.ContentPart{message.TextContent{Text: text}},

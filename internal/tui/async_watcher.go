@@ -401,6 +401,10 @@ func (m *Model) handleAsyncTasksSnapshot(msg asyncTasksSnapshotMsg) tea.Cmd {
 				if snapshotLabel != "" {
 					tooling.UpdateAsyncProgressSnapshot(callID, snapshotLabel, nil, snapshotFinished)
 				}
+				// Register restored slash command async tasks for completion tracking
+				if trimmedTaskID := strings.TrimSpace(task.ID); trimmedTaskID != "" {
+					m.pendingAsyncTasks[trimmedTaskID] = callID
+				}
 			case "complete", "failed":
 				if callID == "" {
 					continue
@@ -644,11 +648,13 @@ func (m *Model) handleAsyncToolUpdate(msg llm.AsyncToolUpdateMsg) tea.Cmd {
 		cmds = append(cmds, util.ReportWarn(fmt.Sprintf("Async task error: %s", msg.Error)))
 	}
 	if len(resumeCallIDs) > 0 {
-		if resumeCmd := m.autoResumeAfterAsyncResult(sessionID); resumeCmd != nil {
-			cmds = append(cmds, resumeCmd)
-		}
+		// Mark results as handled BEFORE triggering resume to ensure the marks are persisted
+		// before the LLM stream saves its response
 		for _, id := range resumeCallIDs {
 			m.sessionManager().MarkToolResultHandled(context.Background(), sessionID, id)
+		}
+		if resumeCmd := m.autoResumeAfterAsyncResult(sessionID); resumeCmd != nil {
+			cmds = append(cmds, resumeCmd)
 		}
 	}
 	if next := m.waitAsyncTaskUpdate(); next != nil {
@@ -780,5 +786,134 @@ func (m *Model) scheduleAsyncAgentCommand(agentName string, desc protocol.Comman
 	if next := m.waitAsyncTaskUpdate(); next != nil {
 		cmds = append(cmds, next)
 	}
+	return batchCmds(cmds)
+}
+
+// isTaskComplete checks if an async task has completed (successfully or with error)
+func isTaskComplete(task *tooling.AsyncTask) bool {
+	if task == nil {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(task.Status))
+	return status == "complete" || status == "failed"
+}
+
+// isTaskFailed checks if an async task ended in failure
+func isTaskFailed(task *tooling.AsyncTask) bool {
+	if task == nil {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(task.Status))
+	return status == "failed"
+}
+
+// handleSlashCommandAsyncCompletion handles completion of async tasks from slash commands
+// It detects which tasks were removed (completed) and finishes their tool calls,
+// then re-triggers the LLM if needed
+func (m *Model) handleSlashCommandAsyncCompletion(msg TaskUpdateMsg) tea.Cmd {
+	if m == nil || m.messages == nil || len(m.pendingAsyncTasks) == 0 {
+		return nil
+	}
+
+	var completedTasks []struct {
+		taskID string
+		callID string
+		task   *tooling.AsyncTask
+	}
+
+	// Detect which pending tasks have been completed by checking their actual status in the daemon
+	// Don't rely solely on tasks disappearing from the watcher (they might get stuck)
+	for taskID, callID := range m.pendingAsyncTasks {
+		if strings.TrimSpace(callID) == "" || strings.TrimSpace(taskID) == "" {
+			continue
+		}
+
+		// Fetch the actual task status from the daemon
+		task, err := tooling.FetchAsyncTask(context.Background(), taskID)
+		if err != nil {
+			// If task can't be fetched, it might be deleted - remove from tracking
+			delete(m.pendingAsyncTasks, taskID)
+			continue
+		}
+
+		// Check if task has actually completed (not just removed from watcher)
+		if isTaskComplete(task) {
+			completedTasks = append(completedTasks, struct {
+				taskID string
+				callID string
+				task   *tooling.AsyncTask
+			}{taskID, callID, task})
+		}
+	}
+
+	if len(completedTasks) == 0 {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+
+	// Process each completed task
+	for _, ct := range completedTasks {
+		callID := strings.TrimSpace(ct.callID)
+		task := ct.task
+		if task == nil {
+			delete(m.pendingAsyncTasks, ct.taskID)
+			continue
+		}
+
+		// Determine result content and error status
+		resultContent := strings.TrimSpace(task.Result)
+		isError := isTaskFailed(task)
+
+		if isError && resultContent == "" {
+			resultContent = strings.TrimSpace(task.Error)
+		}
+		if resultContent == "" {
+			if isError {
+				resultContent = "async task failed"
+			} else {
+				resultContent = "async task completed"
+			}
+		}
+
+		// Build metadata from task
+		metadata := buildAsyncTaskMetadata(*task)
+
+		// Finish the tool call with the result
+		result := tooltypes.Result{
+			ToolCallID: callID,
+			Name:       strings.TrimSpace(task.ToolName),
+			Content:    resultContent,
+			Metadata:   metadata,
+			IsError:    isError,
+			Pending:    false,
+		}
+
+		// Clear the tool call from pending list so it doesn't block LLM resume
+		// This must be done before autoResumeAfterAsyncResult to allow resumption
+		m.streamManager().ClearToolCall(m.sessionID, callID)
+
+		m.messages.FinishTool(callID, result)
+		if cmd := m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result}); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+		// Mark as handled and remove from pending
+		delete(m.pendingAsyncTasks, ct.taskID)
+
+		// Re-trigger LLM with the tool result (similar to how agents handle async tool results)
+		// Check if this task should trigger LLM resume
+		handled := m.sessionManager().ToolResultHandled(context.Background(), m.sessionID, callID)
+		if !handled {
+			// Mark as handled BEFORE triggering resume to ensure the mark is persisted
+			// before the LLM stream saves its response
+			m.sessionManager().MarkToolResultHandled(context.Background(), m.sessionID, callID)
+			// Trigger auto-resume for LLM to continue after async tool completes
+			if resumeCmd := m.autoResumeAfterAsyncResult(m.sessionID); resumeCmd != nil {
+				cmds = append(cmds, resumeCmd)
+			}
+		}
+	}
+
 	return batchCmds(cmds)
 }

@@ -54,12 +54,14 @@ type agentCommandResultMsg struct {
 }
 
 type slashCommandArgumentParsedMsg struct {
-	agent    string
-	command  string
-	rawInput string // Raw input text from user
-	args     map[string]any
-	callID   string // Track the tool call ID we already added
-	err      error
+	agent      string
+	command    string
+	rawInput   string        // Raw input text from user
+	args       map[string]any
+	callID     string        // Track the tool call ID we already added
+	err        error
+	isAsync    bool          // Whether this is an async command
+	toolName   string        // Generated tool name for proper invocation
 }
 
 type permissionRequestEventMsg struct {

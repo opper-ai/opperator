@@ -112,6 +112,7 @@ type Model struct {
 	keyHandlers       map[string]keyHandler
 	asyncProgressSeen map[string]int
 	asyncTaskWatcher  *AsyncTaskWatcher
+	pendingAsyncTasks map[string]string // map[taskID]callID - tracks async tasks waiting for completion
 
 	agentStatuses map[string]string // map[agentName]status (running, stopped, crashed)
 
@@ -310,6 +311,7 @@ func New() (*Model, error) {
 		lspManager:     deps.LSPManager,
 	}
 	m.asyncProgressSeen = make(map[string]int)
+	m.pendingAsyncTasks = make(map[string]string)
 	m.agentStatuses = make(map[string]string)
 
 	if deps.ConversationStore != nil {
@@ -465,7 +467,11 @@ func (m *Model) extraToolSpecsForSession() []tooling.Spec {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if _, ok := msg.(TaskUpdateMsg); ok {
+	if taskMsg, ok := msg.(TaskUpdateMsg); ok {
+		// Check for completed tasks from slash commands
+		if cmd := m.handleSlashCommandAsyncCompletion(taskMsg); cmd != nil {
+			return m, tea.Batch(cmd, m.waitTaskWatcherUpdate())
+		}
 		// Async tasks are no longer displayed in the sidebar
 		return m, m.waitTaskWatcherUpdate()
 	}

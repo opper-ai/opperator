@@ -157,6 +157,21 @@ func LookupAgentCommandTool(name string) (ExternalAgentCommandTarget, bool) {
 	return target, ok
 }
 
+// LookupAgentCommandToolName finds the generated tool name for a given agent and command.
+func LookupAgentCommandToolName(agent, command string) (string, bool) {
+	agentCommandMu.RLock()
+	defer agentCommandMu.RUnlock()
+	trimmedAgent := strings.TrimSpace(agent)
+	trimmedCommand := strings.TrimSpace(command)
+	for toolName, target := range agentCommandRegistry {
+		if strings.EqualFold(strings.TrimSpace(target.Agent), trimmedAgent) &&
+			strings.EqualFold(strings.TrimSpace(target.Command), trimmedCommand) {
+			return toolName, true
+		}
+	}
+	return "", false
+}
+
 // IsAgentCommandToolName reports whether name corresponds to a generated agent command tool.
 func IsAgentCommandToolName(name string) bool {
 	trimmed := strings.TrimSpace(name)

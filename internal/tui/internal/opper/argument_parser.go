@@ -95,8 +95,25 @@ Be flexible in interpreting the input - users may provide values in various form
 		return nil, fmt.Errorf("failed to parse LLM response as JSON: %w", err)
 	}
 
+	// Check if LLM reported an error
+	llmError, hasError := result["error"].(string)
+	if hasError && strings.TrimSpace(llmError) != "" {
+		// Remove the error field from the result since it's not an actual argument
+		delete(result, "error")
+	}
+
 	// Clean up the result and apply defaults
 	cleaned := cleanupParsedArguments(result, schema)
+
+	// If LLM reported an error AND there are missing required arguments, return the error
+	if hasError && strings.TrimSpace(llmError) != "" {
+		if err := validateRequiredArguments(cleaned, schema); err != nil {
+			// Return the LLM's error message instead of validation error
+			return cleaned, fmt.Errorf(llmError)
+		}
+		// All required arguments are present despite the error, so continue with execution
+		return cleaned, nil
+	}
 
 	// Validate required arguments
 	if err := validateRequiredArguments(cleaned, schema); err != nil {
@@ -138,6 +155,12 @@ func buildArgumentSchema(args []protocol.CommandArgument) map[string]any {
 		if arg.Required {
 			required = append(required, arg.Name)
 		}
+	}
+
+	// Add error field for LLM to report parsing issues
+	properties["error"] = map[string]any{
+		"type":        "string",
+		"description": "If there's any issue parsing the arguments or determining the user's intent, describe the problem here. Otherwise, omit this field.",
 	}
 
 	schema := map[string]any{

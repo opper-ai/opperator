@@ -67,6 +67,17 @@ func (e *Engine) trackAsyncTask(reg asyncTaskRegistration) {
 	e.async.Watch(reg)
 }
 
+// TrackAsyncTask starts monitoring an async task for completion
+// Used by slash commands to ensure LLM re-triggering when task completes
+func (e *Engine) TrackAsyncTask(taskID, sessionID, callID, toolName string) {
+	e.trackAsyncTask(asyncTaskRegistration{
+		TaskID:    strings.TrimSpace(taskID),
+		SessionID: strings.TrimSpace(sessionID),
+		CallID:    strings.TrimSpace(callID),
+		ToolName:  strings.TrimSpace(toolName),
+	})
+}
+
 type streamPhaseResult struct {
 	content     string
 	toolCalls   []tooltypes.Call

@@ -450,6 +450,7 @@ func (c *agentController) buildSlashCommandsForAgent(agentName string, cmds []pr
 		agentCopy := trimmedAgent
 		commandCopy := commandName
 		argumentSchema := cmd.Arguments // Capture the argument schema
+		isAsync := cmd.Async            // Capture async flag
 
 		command := commands.Command{
 			Name:             slash,
@@ -461,7 +462,7 @@ func (c *agentController) buildSlashCommandsForAgent(agentName string, cmds []pr
 
 				// Commands with argument schema use LLM-powered parser
 				if len(argumentSchema) > 0 {
-					return parseSlashCommandArgumentsCmd(agentCopy, commandCopy, trimmed, argumentSchema)
+					return parseSlashCommandArgumentsCmd(agentCopy, commandCopy, trimmed, argumentSchema, isAsync)
 				}
 
 				// Commands with no arguments - invoke directly
@@ -692,9 +693,15 @@ func (m *Model) handleAgentCommandResult(msg agentCommandResultMsg) tea.Cmd {
 
 		// If we have a callID from slash command parser, finish the tool call with the error
 		if callID != "" {
+			// Determine if this is an async command
+			toolName := "agent_command"
+			if desc, ok := m.agents.commandDescriptor(agent, command); ok && desc.Async {
+				toolName = tooling.AsyncToolName
+			}
+
 			errorCall := tooltypes.Call{
 				ID:       callID,
-				Name:     "agent_command", // Keep the tool name for renderer lookup
+				Name:     toolName,
 				Finished: true,
 				Input: fmt.Sprintf(`{"agent":"%s","command":"%s","command_failed":true}`,
 					strings.ReplaceAll(agent, `"`, `\"`),
@@ -718,7 +725,7 @@ func (m *Model) handleAgentCommandResult(msg agentCommandResultMsg) tea.Cmd {
 
 			result := tooltypes.Result{
 				ToolCallID: callID,
-				Name:       "agent_command", // Keep the tool name for renderer lookup
+				Name:       toolName,
 				Content:    summary,
 				Metadata:   string(metadataJSON),
 				IsError:    true,
@@ -759,10 +766,77 @@ func (m *Model) handleAgentCommandResult(msg agentCommandResultMsg) tea.Cmd {
 		m.messages.AddOrReplaceToolCall(call)
 	}
 
-	// Then finish it with the result
+	// Then finish it with the result (unless it's async, in which case the async task watcher will handle it)
+	// Determine if this is an async command
+	isAsync := false
+	if desc, ok := m.agents.commandDescriptor(agent, command); ok && desc.Async {
+		isAsync = true
+	}
+
+	// For async commands, keep the generated tool name so the renderer shows the correct label
+	// For sync commands, use agent_command
+	toolName := "agent_command"
+	if isAsync {
+		// Async commands should have their generated tool name already set in the call
+		// Look it up to maintain consistency
+		if existingToolName, ok := tooling.LookupAgentCommandToolName(agent, command); ok {
+			toolName = existingToolName
+		} else {
+			toolName = tooling.AsyncToolName // Fallback for direct async tool invocations
+		}
+	}
+
+	// For async commands, just update the call with the task metadata and let the async watcher handle it
+	if isAsync {
+		// Parse the metadata to extract async task info
+		var meta map[string]any
+		if msg.result != nil {
+			// map[string]interface{} and map[string]any are identical in Go 1.18+
+			if metaMap, ok := msg.result.(map[string]any); ok {
+				meta = metaMap
+			}
+		}
+
+		// Update the tool call with the async task information
+		call := tooltypes.Call{
+			ID:       callID,
+			Name:     toolName,
+			Finished: false,
+			Input:    msg.output,
+		}
+		m.messages.EnsureToolCall(call)
+
+		// Store metadata so the async watcher can find and track the task
+		// Do NOT call FinishTool - the async watcher will update the result as the task progresses
+		result := tooltypes.Result{
+			ToolCallID: callID,
+			Name:       toolName,
+			Content:    msg.output,
+			Metadata:   mustMarshalJSON(meta),
+			IsError:    false,
+			Pending:    true,
+		}
+		m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result})
+
+		// Register this task as pending so we can track when it completes
+		metadataStr := mustMarshalJSON(meta)
+		if taskID, _, _, _ := extractAsyncTaskMetadata(metadataStr); taskID != "" {
+			m.pendingAsyncTasks[taskID] = callID
+
+			// Track the task with LLM engine's async tracker for real-time monitoring
+			// This ensures the LLM is re-invoked when the task completes, just like agent-invoked tasks
+			if m.llmEngine != nil {
+				m.llmEngine.TrackAsyncTask(taskID, m.sessionID, callID, toolName)
+			}
+		}
+
+		return nil
+	}
+
+	// For sync commands, finish the tool call immediately
 	result := tooltypes.Result{
 		ToolCallID: callID,
-		Name:       "agent_command",
+		Name:       toolName,
 		Content:    msg.output,
 		IsError:    false,
 		Pending:    false,
@@ -819,9 +893,16 @@ func (m *Model) handleFocusCommand(input string) tea.Cmd {
 // parseSlashCommandArgumentsCmd returns a tea.Cmd that asynchronously parses slash command
 // arguments using the Opper API and returns a slashCommandArgumentParsedMsg.
 // This is called immediately, so we show the UI first, then parse in the background.
-func parseSlashCommandArgumentsCmd(agent, command, rawInput string, schema []protocol.CommandArgument) tea.Cmd {
+func parseSlashCommandArgumentsCmd(agent, command, rawInput string, schema []protocol.CommandArgument, isAsync bool) tea.Cmd {
 	// Create callID upfront so we can track it
 	callID := uuid.New().String()
+
+	// Look up the generated tool name for this command
+	toolName, _ := tooling.LookupAgentCommandToolName(agent, command)
+	if toolName == "" {
+		// Fallback to direct tool name if not found in registry
+		toolName = "agent_command"
+	}
 
 	// Return a batch: first add the UI elements, then parse in background
 	return tea.Batch(
@@ -834,6 +915,8 @@ func parseSlashCommandArgumentsCmd(agent, command, rawInput string, schema []pro
 				args:     nil, // Will be filled by parser
 				callID:   callID,
 				err:      nil, // Not an error, just showing UI
+				isAsync:  isAsync,
+				toolName: toolName,
 			}
 		},
 		// Then parse asynchronously
@@ -849,6 +932,8 @@ func parseSlashCommandArgumentsCmd(agent, command, rawInput string, schema []pro
 				args:     args,
 				callID:   callID,
 				err:      err,
+				isAsync:  isAsync,
+				toolName: toolName,
 			}
 		},
 	)
@@ -880,10 +965,10 @@ func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedM
 		m.messages.AddUser(userMsg)
 		m.addUserHistory(userMsg)
 
-		// Create pending tool call for the command
+		// Create pending tool call for the command - use the generated tool name
 		call := tooltypes.Call{
 			ID:       msg.callID,
-			Name:     prettifiedCommand, // Use prettified name instead of "agent_command"
+			Name:     msg.toolName,
 			Finished: false,
 			Input:    `{"parsing": true}`, // Indicate we're still parsing
 		}
@@ -896,12 +981,12 @@ func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedM
 		return nil
 	}
 
-	// Second message: parsing complete, invoke the command
+	// Second message: parsing complete, check for errors
 	if msg.err != nil {
-		// First update the call to mark it as finished
+		// Parsing failed - finish the tool with error status
 		errorCall := tooltypes.Call{
 			ID:       msg.callID,
-			Name:     "agent_command", // Keep the tool name for renderer lookup
+			Name:     msg.toolName,
 			Finished: true,
 			Input: fmt.Sprintf(`{"agent":"%s","command":"%s","parsing_failed":true}`,
 				strings.ReplaceAll(agent, `"`, `\"`),
@@ -923,10 +1008,10 @@ func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedM
 		}
 		metadataJSON, _ := json.Marshal(metadata)
 
-		// Then add the result
+		// Finish the result
 		result := tooltypes.Result{
 			ToolCallID: msg.callID,
-			Name:       "agent_command", // Keep the tool name for renderer lookup
+			Name:       msg.toolName,
 			Content:    fmt.Sprintf("Failed to parse arguments: %v", msg.err),
 			Metadata:   string(metadataJSON),
 			IsError:    true,
@@ -938,10 +1023,9 @@ func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedM
 	}
 
 	// Update the tool call with the parsed arguments
-	prettifiedCommand := toolregistry.PrettifyName(command)
 	call := tooltypes.Call{
 		ID:       msg.callID,
-		Name:     prettifiedCommand, // Use prettified name
+		Name:     msg.toolName,
 		Finished: false,
 		Input: fmt.Sprintf(`{"agent":"%s","command":"%s","args":%s}`,
 			strings.ReplaceAll(agent, `"`, `\"`),
@@ -952,22 +1036,47 @@ func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedM
 	// Update the tool call in messages (this will update the pending call)
 	m.messages.EnsureToolCall(call)
 
-	// Invoke the command - when it completes, handleAgentCommandResult will update the tool result
-	if m.agents == nil {
-		result := tooltypes.Result{
-			ToolCallID: msg.callID,
-			Name:       "agent_command",
-			Content:    "Agent controller not available",
-			IsError:    true,
-			Pending:    false,
-		}
-		m.messages.FinishTool(msg.callID, result)
-		m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result})
-		return util.ReportWarn("Agent controller not available")
-	}
+	// Invoke the command via RunAgentCommand with the generated tool name
+	// For async commands, this will internally call RunAsyncTool
+	// For sync commands, it will do direct IPC
+	return func() tea.Msg {
+		// Use no timeout for async commands, standard timeout for sync
+		// Enrich context with session and call IDs so they're sent to the daemon
+		var ctx context.Context
+		var cancel context.CancelFunc
 
-	// Return a command that will preserve the callID we created
-	return invokeAgentCommandWithCallID(m.agents, msg.agent, msg.command, msg.args, msg.callID)
+		baseCtx := tooling.WithSessionContext(context.Background(), m.sessionID, msg.callID)
+		if msg.isAsync {
+			ctx = baseCtx
+		} else {
+			ctx, cancel = context.WithTimeout(baseCtx, 5*time.Second)
+			defer cancel()
+		}
+
+		// Marshal args to JSON string
+		// JSON marshaling of args should not fail for the types we support
+		argsJSON, _ := json.Marshal(msg.args)
+
+		// Invoke via RunAgentCommand with the generated tool name
+		// RunAgentCommand will detect if it's async and call RunAsyncTool internally
+		content, metadata := tooling.RunAgentCommand(ctx, msg.toolName, string(argsJSON), "")
+
+		// Parse result metadata if provided
+		// If unmarshaling fails, result remains nil which is acceptable
+		var result any
+		if metadata != "" {
+			_ = json.Unmarshal([]byte(metadata), &result)
+		}
+
+		return agentCommandResultMsg{
+			agent:   msg.agent,
+			command: msg.command,
+			output:  content,
+			result:  result,
+			err:     nil,
+			callID:  msg.callID,
+		}
+	}
 }
 
 // invokeAgentCommandWithCallID is similar to invokeAgentCommand but passes the callID
@@ -999,8 +1108,19 @@ func invokeAgentCommandWithCallID(ac *agentController, agentName, commandName st
 	}
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		// Async commands don't use a timeout - they're submitted to the daemon
+		// and run independently. Sync commands use a 5-second timeout.
+		var ctx context.Context
+		var cancel context.CancelFunc
+
+		if desc, ok := ac.commandDescriptor(trimmedAgent, trimmedCommand); ok && desc.Async {
+			// Async: no timeout, task runs in daemon
+			ctx = context.Background()
+		} else {
+			// Sync: use timeout for IPC
+			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+		}
 
 		data, err := tooling.IPCRequestCtx(ctx, payload)
 		if err != nil {
