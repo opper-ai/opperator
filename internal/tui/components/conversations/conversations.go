@@ -113,7 +113,7 @@ func (m *Model) View() string {
 				// Emphasize selected item
 				itemStyle = itemStyle.BorderForeground(t.Primary)
 			} else {
-				itemStyle = itemStyle.BorderForeground(t.BgBaseLighter)
+				itemStyle = itemStyle.BorderForeground(t.FgMuted)
 			}
 			label := c.Title
 			if agent := strings.TrimSpace(c.ActiveAgent); agent != "" {
