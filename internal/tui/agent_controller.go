@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/google/uuid"
 
 	"tui/commands"
 	"tui/coreagent"
@@ -19,6 +20,8 @@ import (
 	llm "tui/llm"
 	"tui/sessionstate"
 	tooling "tui/tools"
+	toolregistry "tui/tools/registry"
+	tooltypes "tui/tools/types"
 	"tui/util"
 )
 
@@ -692,20 +695,43 @@ func (m *Model) handleAgentCommandResult(msg agentCommandResultMsg) tea.Cmd {
 		return util.ReportError(fmt.Errorf("%s", summary))
 	}
 
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Command %s on %s completed.", command, agent))
-	if output := strings.TrimSpace(msg.output); output != "" {
-		builder.WriteString("\n\n")
-		builder.WriteString(output)
+	// Add user message showing the command that was executed
+	prettifiedCommand := toolregistry.PrettifyName(command)
+	userMsg := fmt.Sprintf("*%s*", prettifiedCommand)
+	m.messages.AddUser(userMsg)
+	m.addUserHistory(userMsg)
+
+	// Create tool call for the command
+	callID := uuid.New().String()
+	call := tooltypes.Call{
+		ID:       callID,
+		Name:     "agent_command",
+		Finished: false,
+		Input: fmt.Sprintf(`{"agent":"%s","command":"%s"}`,
+			strings.ReplaceAll(agent, `"`, `\"`),
+			strings.ReplaceAll(command, `"`, `\"`)),
 	}
-	content := builder.String()
 
-	m.messages.AddAssistantStart(llm.ModelName())
-	m.messages.AppendAssistant(content)
-	m.messages.EndAssistant()
-	m.addAssistantContentHistory(m.sessionID, content)
+	// Record tool calls to storage
+	m.recordAssistantToolCallsForSession(m.sessionID, []tooltypes.Call{call}, "")
 
-	return util.ReportInfo(fmt.Sprintf("Command %s on %s completed", command, agent))
+	// First, add/replace the tool call
+	m.messages.AddOrReplaceToolCall(call)
+
+	// Then finish it with the result
+	result := tooltypes.Result{
+		ToolCallID: callID,
+		Name:       "agent_command",
+		Content:    msg.output,
+		IsError:    false,
+		Pending:    false,
+	}
+	m.messages.FinishTool(callID, result)
+
+	// Persist tool results to storage
+	m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result})
+
+	return nil
 }
 
 func (m *Model) handleAgentCommand(input string) tea.Cmd {

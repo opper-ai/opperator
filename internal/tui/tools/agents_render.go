@@ -26,6 +26,7 @@ func init() {
 	registerRestartAgentRenderer()
 	registerGetLogsRenderer()
 	registerFocusAgentRenderer()
+	registerAgentCommandRenderer()
 }
 
 func registerListAgentsRenderer() {
@@ -554,6 +555,62 @@ func registerFocusAgentRenderer() {
 				return "Focus on " + filepath.Base(name)
 			}
 			return "Clear focus"
+		},
+	})
+}
+
+func registerAgentCommandRenderer() {
+	toolregistry.Register("agent_command", toolregistry.Definition{
+		Label: "Command",
+		Pending: func(call tooltypes.Call, width int, spinner string) string {
+			t := styles.CurrentTheme()
+			var params struct {
+				Agent   string `json:"agent"`
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal([]byte(call.Input), &params)
+			title := fmt.Sprintf("Command %s on %s", strings.TrimSpace(params.Command), strings.TrimSpace(params.Agent))
+			header := lipgloss.NewStyle().Foreground(t.FgMuted).Render("└ " + title + " ")
+			return strings.TrimSpace(header + spinner)
+		},
+		Render: func(call tooltypes.Call, result tooltypes.Result, width int) string {
+			t := styles.CurrentTheme()
+			var params struct {
+				Agent   string `json:"agent"`
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal([]byte(call.Input), &params)
+
+			// Create header with muted color
+			title := fmt.Sprintf("Command %s on %s", strings.TrimSpace(params.Command), strings.TrimSpace(params.Agent))
+			header := lipgloss.NewStyle().Foreground(t.FgMuted).Render("└ " + title)
+
+			// Create gutter for body content
+			gutter := lipgloss.NewStyle().MarginLeft(2).Foreground(t.FgMuted).Render("│ ")
+
+			// Create success indicator
+			indicator := "✓ "
+			successStyle := lipgloss.NewStyle().Foreground(t.Success)
+			statusLine := gutter + successStyle.Render(indicator+"succeeded")
+
+			// Build rows for vertical join
+			rows := []string{header, "", statusLine}
+
+			// Add output if available
+			if output := strings.TrimSpace(result.Content); output != "" {
+				rows = append(rows, "", gutter+output)
+			}
+
+			// Join all sections vertically
+			return lipgloss.JoinVertical(lipgloss.Left, rows...)
+		},
+		SummaryRender: func(call tooltypes.Call, result tooltypes.Result, width int) string {
+			var params struct {
+				Command string `json:"command"`
+				Agent   string `json:"agent"`
+			}
+			_ = json.Unmarshal([]byte(call.Input), &params)
+			return fmt.Sprintf("Command %s on %s", strings.TrimSpace(params.Command), strings.TrimSpace(params.Agent))
 		},
 	})
 }
