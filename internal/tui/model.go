@@ -697,6 +697,8 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		return m.handleCycleAgentResult(v)
 	case agentCommandResultMsg:
 		return m.handleAgentCommandResult(v)
+	case slashCommandArgumentParsedMsg:
+		return m.handleSlashCommandArgumentParsed(v)
 	case asyncTasksSnapshotMsg:
 		return m.handleAsyncTasksSnapshot(v)
 	case llm.AsyncToolUpdateMsg:

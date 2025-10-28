@@ -291,34 +291,34 @@ func parseAgentCommandMetadata(raw string) (externalAgentCommandMetadata, bool) 
 }
 
 func agentCommandHeaderTitle(def externalAgentCommandDef, meta externalAgentCommandMetadata) string {
-	label := strings.TrimSpace(def.Label)
-	if label == "" {
-		label = strings.TrimSpace(meta.Command)
-	}
-	if label == "" {
-		label = strings.TrimSpace(def.Command)
-	}
-	if label == "" {
-		label = "Agent command"
-	}
-
-	agentName := strings.TrimSpace(meta.Agent)
-	if agentName == "" {
-		agentName = strings.TrimSpace(def.AgentName)
-	}
-	if agentName != "" {
-		return fmt.Sprintf("%s — %s", label, agentName)
+	// Prefer the command name from metadata if available
+	label := strings.TrimSpace(meta.Command)
+	if label != "" {
+		// Prettify the command name
+		label = toolregistry.PrettifyName(label)
+	} else {
+		label = strings.TrimSpace(def.Label)
+		if label == "" {
+			label = strings.TrimSpace(def.Command)
+		}
+		if label == "" {
+			label = "Agent command"
+		}
 	}
 	return label
 }
 
 func agentCommandSummaryTitle(def externalAgentCommandDef, meta externalAgentCommandMetadata) string {
-	label := strings.TrimSpace(def.Label)
-	if label == "" {
-		label = strings.TrimSpace(meta.Command)
-	}
-	if label == "" {
-		label = strings.TrimSpace(def.Command)
+	// Prefer the command name from metadata if available
+	label := strings.TrimSpace(meta.Command)
+	if label != "" {
+		// Prettify the command name
+		label = toolregistry.PrettifyName(label)
+	} else {
+		label = strings.TrimSpace(def.Label)
+		if label == "" {
+			label = strings.TrimSpace(def.Command)
+		}
 	}
 	if label == "" {
 		label = "Agent command"

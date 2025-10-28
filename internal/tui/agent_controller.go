@@ -16,6 +16,7 @@ import (
 	"tui/commands"
 	"tui/coreagent"
 	"tui/internal/conversation"
+	"tui/internal/opper"
 	"tui/internal/protocol"
 	llm "tui/llm"
 	"tui/sessionstate"
@@ -446,10 +447,9 @@ func (c *agentController) buildSlashCommandsForAgent(agentName string, cmds []pr
 
 		requiresArg := cmd.ArgumentRequired
 		hint := strings.TrimSpace(cmd.ArgumentHint)
-		slashCopy := slash
-		titleCopy := title
 		agentCopy := trimmedAgent
 		commandCopy := commandName
+		argumentSchema := cmd.Arguments // Capture the argument schema
 
 		command := commands.Command{
 			Name:             slash,
@@ -458,18 +458,14 @@ func (c *agentController) buildSlashCommandsForAgent(agentName string, cmds []pr
 			ArgumentHint:     hint,
 			Action: func(ctx commands.Context, argument string) tea.Cmd {
 				trimmed := strings.TrimSpace(argument)
-				if requiresArg && trimmed == "" {
-					label := titleCopy
-					if label == "" {
-						label = commandCopy
-					}
-					return util.ReportWarn(fmt.Sprintf("%s requires an argument", slashCopy))
+
+				// Commands with argument schema use LLM-powered parser
+				if len(argumentSchema) > 0 {
+					return parseSlashCommandArgumentsCmd(agentCopy, commandCopy, trimmed, argumentSchema)
 				}
-				var args map[string]any
-				if trimmed != "" {
-					args = map[string]any{"input": trimmed}
-				}
-				return ctx.InvokeAgentCommand(agentCopy, commandCopy, args)
+
+				// Commands with no arguments - invoke directly
+				return ctx.InvokeAgentCommand(agentCopy, commandCopy, nil)
 			},
 		}
 
@@ -691,32 +687,77 @@ func (m *Model) handleAgentCommandResult(msg agentCommandResultMsg) tea.Cmd {
 	}
 
 	if msg.err != nil {
+		callID := msg.callID
 		summary := fmt.Sprintf("Command %s on %s failed: %v", command, agent, msg.err)
+
+		// If we have a callID from slash command parser, finish the tool call with the error
+		if callID != "" {
+			errorCall := tooltypes.Call{
+				ID:       callID,
+				Name:     "agent_command", // Keep the tool name for renderer lookup
+				Finished: true,
+				Input: fmt.Sprintf(`{"agent":"%s","command":"%s","command_failed":true}`,
+					strings.ReplaceAll(agent, `"`, `\"`),
+					strings.ReplaceAll(command, `"`, `\"`)),
+			}
+			m.messages.EnsureToolCall(errorCall)
+
+			// Create metadata to indicate failure
+			metadata := struct {
+				Agent   string `json:"agent"`
+				Command string `json:"command"`
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+			}{
+				Agent:   agent,
+				Command: command,
+				Success: false,
+				Error:   msg.err.Error(),
+			}
+			metadataJSON, _ := json.Marshal(metadata)
+
+			result := tooltypes.Result{
+				ToolCallID: callID,
+				Name:       "agent_command", // Keep the tool name for renderer lookup
+				Content:    summary,
+				Metadata:   string(metadataJSON),
+				IsError:    true,
+				Pending:    false,
+			}
+			m.messages.FinishTool(callID, result)
+			m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result})
+		}
+
 		return util.ReportError(fmt.Errorf("%s", summary))
 	}
 
-	// Add user message showing the command that was executed
-	prettifiedCommand := toolregistry.PrettifyName(command)
-	userMsg := fmt.Sprintf("*%s*", prettifiedCommand)
-	m.messages.AddUser(userMsg)
-	m.addUserHistory(userMsg)
+	callID := msg.callID
 
-	// Create tool call for the command
-	callID := uuid.New().String()
-	call := tooltypes.Call{
-		ID:       callID,
-		Name:     "agent_command",
-		Finished: false,
-		Input: fmt.Sprintf(`{"agent":"%s","command":"%s"}`,
-			strings.ReplaceAll(agent, `"`, `\"`),
-			strings.ReplaceAll(command, `"`, `\"`)),
+	// Only add user message and tool call if they weren't already added by slash command parser
+	if callID == "" {
+		// Add user message showing the command that was executed
+		prettifiedCommand := toolregistry.PrettifyName(command)
+		userMsg := fmt.Sprintf("*%s*", prettifiedCommand)
+		m.messages.AddUser(userMsg)
+		m.addUserHistory(userMsg)
+
+		// Create tool call for the command
+		callID = uuid.New().String()
+		call := tooltypes.Call{
+			ID:       callID,
+			Name:     "agent_command",
+			Finished: false,
+			Input: fmt.Sprintf(`{"agent":"%s","command":"%s"}`,
+				strings.ReplaceAll(agent, `"`, `\"`),
+				strings.ReplaceAll(command, `"`, `\"`)),
+		}
+
+		// Record tool calls to storage
+		m.recordAssistantToolCallsForSession(m.sessionID, []tooltypes.Call{call}, "")
+
+		// First, add/replace the tool call
+		m.messages.AddOrReplaceToolCall(call)
 	}
-
-	// Record tool calls to storage
-	m.recordAssistantToolCallsForSession(m.sessionID, []tooltypes.Call{call}, "")
-
-	// First, add/replace the tool call
-	m.messages.AddOrReplaceToolCall(call)
 
 	// Then finish it with the result
 	result := tooltypes.Result{
@@ -773,4 +814,244 @@ func (m *Model) handleFocusCommand(input string) tea.Cmd {
 	}()
 
 	return nil
+}
+
+// parseSlashCommandArgumentsCmd returns a tea.Cmd that asynchronously parses slash command
+// arguments using the Opper API and returns a slashCommandArgumentParsedMsg.
+// This is called immediately, so we show the UI first, then parse in the background.
+func parseSlashCommandArgumentsCmd(agent, command, rawInput string, schema []protocol.CommandArgument) tea.Cmd {
+	// Create callID upfront so we can track it
+	callID := uuid.New().String()
+
+	// Return a batch: first add the UI elements, then parse in background
+	return tea.Batch(
+		// First, add user message and pending tool call immediately
+		func() tea.Msg {
+			return slashCommandArgumentParsedMsg{
+				agent:    agent,
+				command:  command,
+				rawInput: rawInput,
+				args:     nil, // Will be filled by parser
+				callID:   callID,
+				err:      nil, // Not an error, just showing UI
+			}
+		},
+		// Then parse asynchronously
+		func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			args, err := opper.ParseCommandArguments(ctx, rawInput, schema)
+			return slashCommandArgumentParsedMsg{
+				agent:    agent,
+				command:  command,
+				rawInput: rawInput,
+				args:     args,
+				callID:   callID,
+				err:      err,
+			}
+		},
+	)
+}
+
+// handleSlashCommandArgumentParsed handles the result of slash command argument parsing.
+// This is called twice per command: once with args=nil to show UI immediately,
+// and again with parsed args to invoke the command.
+func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedMsg) tea.Cmd {
+	agent := strings.TrimSpace(msg.agent)
+	if agent == "" {
+		agent = m.currentActiveAgentName()
+	}
+	command := strings.TrimSpace(msg.command)
+	if command == "" {
+		command = "command"
+	}
+
+	// First message: show UI (args is nil)
+	if msg.args == nil && msg.err == nil {
+		// Add user message showing the command that was executed
+		prettifiedCommand := toolregistry.PrettifyName(command)
+		var userMsg string
+		if trimmed := strings.TrimSpace(msg.rawInput); trimmed != "" {
+			userMsg = fmt.Sprintf("*%s:* %s", prettifiedCommand, trimmed)
+		} else {
+			userMsg = fmt.Sprintf("*%s*", prettifiedCommand)
+		}
+		m.messages.AddUser(userMsg)
+		m.addUserHistory(userMsg)
+
+		// Create pending tool call for the command
+		call := tooltypes.Call{
+			ID:       msg.callID,
+			Name:     prettifiedCommand, // Use prettified name instead of "agent_command"
+			Finished: false,
+			Input:    `{"parsing": true}`, // Indicate we're still parsing
+		}
+
+		// Record tool calls to storage
+		m.recordAssistantToolCallsForSession(m.sessionID, []tooltypes.Call{call}, "")
+
+		// Add the pending tool call to messages
+		m.messages.AddOrReplaceToolCall(call)
+		return nil
+	}
+
+	// Second message: parsing complete, invoke the command
+	if msg.err != nil {
+		// First update the call to mark it as finished
+		errorCall := tooltypes.Call{
+			ID:       msg.callID,
+			Name:     "agent_command", // Keep the tool name for renderer lookup
+			Finished: true,
+			Input: fmt.Sprintf(`{"agent":"%s","command":"%s","parsing_failed":true}`,
+				strings.ReplaceAll(agent, `"`, `\"`),
+				strings.ReplaceAll(command, `"`, `\"`)),
+		}
+		m.messages.EnsureToolCall(errorCall)
+
+		// Create metadata to indicate failure
+		metadata := struct {
+			Agent   string `json:"agent"`
+			Command string `json:"command"`
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		}{
+			Agent:   agent,
+			Command: command,
+			Success: false,
+			Error:   msg.err.Error(),
+		}
+		metadataJSON, _ := json.Marshal(metadata)
+
+		// Then add the result
+		result := tooltypes.Result{
+			ToolCallID: msg.callID,
+			Name:       "agent_command", // Keep the tool name for renderer lookup
+			Content:    fmt.Sprintf("Failed to parse arguments: %v", msg.err),
+			Metadata:   string(metadataJSON),
+			IsError:    true,
+			Pending:    false,
+		}
+		m.messages.FinishTool(msg.callID, result)
+		m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result})
+		return util.ReportWarn(fmt.Sprintf("Failed to parse arguments for %s: %v", command, msg.err))
+	}
+
+	// Update the tool call with the parsed arguments
+	prettifiedCommand := toolregistry.PrettifyName(command)
+	call := tooltypes.Call{
+		ID:       msg.callID,
+		Name:     prettifiedCommand, // Use prettified name
+		Finished: false,
+		Input: fmt.Sprintf(`{"agent":"%s","command":"%s","args":%s}`,
+			strings.ReplaceAll(agent, `"`, `\"`),
+			strings.ReplaceAll(command, `"`, `\"`),
+			mustMarshalJSON(msg.args)),
+	}
+
+	// Update the tool call in messages (this will update the pending call)
+	m.messages.EnsureToolCall(call)
+
+	// Invoke the command - when it completes, handleAgentCommandResult will update the tool result
+	if m.agents == nil {
+		result := tooltypes.Result{
+			ToolCallID: msg.callID,
+			Name:       "agent_command",
+			Content:    "Agent controller not available",
+			IsError:    true,
+			Pending:    false,
+		}
+		m.messages.FinishTool(msg.callID, result)
+		m.recordToolResultsForSession(m.sessionID, []tooltypes.Result{result})
+		return util.ReportWarn("Agent controller not available")
+	}
+
+	// Return a command that will preserve the callID we created
+	return invokeAgentCommandWithCallID(m.agents, msg.agent, msg.command, msg.args, msg.callID)
+}
+
+// invokeAgentCommandWithCallID is similar to invokeAgentCommand but passes the callID
+// so that handleAgentCommandResult knows not to create a duplicate tool call.
+func invokeAgentCommandWithCallID(ac *agentController, agentName, commandName string, args map[string]any, callID string) tea.Cmd {
+	trimmedAgent := strings.TrimSpace(agentName)
+	if trimmedAgent == "" {
+		trimmedAgent = strings.TrimSpace(ac.activeName)
+	}
+	if trimmedAgent == "" {
+		return util.ReportWarn("No active agent selected")
+	}
+
+	trimmedCommand := strings.TrimSpace(commandName)
+	if trimmedCommand == "" {
+		return util.ReportWarn("Command name required")
+	}
+
+	payload := struct {
+		Type      string         `json:"type"`
+		AgentName string         `json:"agent_name"`
+		Command   string         `json:"command"`
+		Args      map[string]any `json:"args,omitempty"`
+	}{
+		Type:      "command",
+		AgentName: trimmedAgent,
+		Command:   trimmedCommand,
+		Args:      args,
+	}
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		data, err := tooling.IPCRequestCtx(ctx, payload)
+		if err != nil {
+			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: err, callID: callID}
+		}
+
+		var resp struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+			Command struct {
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+				Result  any    `json:"result"`
+			} `json:"command"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: fmt.Errorf("decode command response: %w", err), callID: callID}
+		}
+
+		if !resp.Success {
+			if resp.Error == "" {
+				resp.Error = "unknown error"
+			}
+			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: errors.New(resp.Error), callID: callID}
+		}
+
+		if !resp.Command.Success {
+			errMsg := resp.Command.Error
+			if errMsg == "" {
+				errMsg = "command failed"
+			}
+			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: errors.New(errMsg), callID: callID}
+		}
+
+		var pretty string
+		if resp.Command.Result != nil {
+			formatted, err := json.MarshalIndent(resp.Command.Result, "", "  ")
+			if err == nil {
+				pretty = string(formatted)
+			}
+		}
+
+		return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, result: resp.Command.Result, output: pretty, callID: callID}
+	}
+}
+
+// mustMarshalJSON marshals a value to JSON string, returning "{}" on error.
+func mustMarshalJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }

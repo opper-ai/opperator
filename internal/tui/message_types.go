@@ -50,6 +50,16 @@ type agentCommandResultMsg struct {
 	output  string
 	result  any
 	err     error
+	callID  string // If set, tool call was already added elsewhere (e.g., by slash command parser)
+}
+
+type slashCommandArgumentParsedMsg struct {
+	agent    string
+	command  string
+	rawInput string // Raw input text from user
+	args     map[string]any
+	callID   string // Track the tool call ID we already added
+	err      error
 }
 
 type permissionRequestEventMsg struct {
