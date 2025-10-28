@@ -94,7 +94,7 @@ func (m *Model) renderBaseView() string {
 	messagesView := m.messages.View()
 
 	inputView := m.input.View()
-	inputWithPadding := lipgloss.NewStyle().PaddingTop(1).PaddingBottom(1).Render(inputView)
+	inputWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(inputView)
 
 	statusView := lipgloss.NewStyle().
 		Width(mainW).
