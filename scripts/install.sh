@@ -276,9 +276,21 @@ resolve_version() {
 
 stop_daemon() {
   if command -v "$APP" >/dev/null 2>&1; then
-    print_message info "Checking for running daemon..."
-    if "$APP" daemon stop 2>/dev/null; then
+    print_message info "Checking if Opperator daemon is running..."
+    local output
+    local exit_code
+    output=$("$APP" daemon stop 2>&1) || exit_code=$?
+    exit_code=${exit_code:-0}
+
+    if [[ $exit_code -eq 0 ]]; then
       print_message info "✔︎ Stopped running daemon"
+    elif [[ "$output" == *"Daemon is not running"* ]]; then
+      print_message info "✔︎ Daemon not running"
+    else
+      print_message error "Failed to stop daemon. Please run the following command before retrying:"
+      print_message error "  op daemon stop"
+      print_message error "Output: $output"
+      exit 1
     fi
   fi
 }
