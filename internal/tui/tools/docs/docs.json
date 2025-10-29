@@ -5,7 +5,7 @@
   },
   {
     "name": "lifecycle-events-guide.md",
-    "description": "Read when you need to respond to conversation changes, agent activation, or other Opperator events. Shows how to implement event handlers (on_new_conversation, on_conversation_switched, on_agent_activated, on_agent_deactivated, on_working_directory_changed, on_config_update, on_status) with practical examples for managing conversation state, updating UI, and reacting to context changes"
+    "description": "Read when responding to conversation changes or agent activation. Shows event handlers: on_new_conversation, on_conversation_switched, on_agent_activated/deactivated, on_working_directory_changed, on_config_update. Covers state management, UI updates"
   },
   {
     "name": "agent-tools-guide.md",
@@ -29,18 +29,22 @@
   },
   {
     "name": "agents-yaml-guide.md",
-    "description": "Read when configuring how the Opperator daemon manages your agent. Shows the YAML configuration structure including required fields (name, command, process_root), optional settings (description, color, env, auto_restart, start_with_daemon), scheduled execution with cron expressions, environment variables, and best practices for production deployments"
+    "description": "Read when configuring agent daemon management. Shows YAML structure: required fields (name, command, process_root), optional settings (auto_restart, start_with_daemon), cron scheduling, environment variables"
   },
   {
     "name": "background-tasks-guide.md",
-    "description": "Read when your agent needs to run periodic tasks, monitoring, or concurrent operations. Shows how to start background threads in start(), implement worker loops with threading.Event for graceful shutdown, use locks for thread safety, handle multiple workers, use thread pools for async commands, and implement common patterns like periodic tasks, file monitoring, and queue processing"
+    "description": "Read when running periodic tasks, monitoring, or concurrent operations. Shows background threads in start(), worker loops with threading.Event for shutdown, locks for thread safety, thread pools for async commands. Common patterns: periodic tasks, file monitoring"
   },
   {
     "name": "opper-sdk-guide.md",
-    "description": "Read when you need to perform any AI task unless instructed otherwise. The default approach for all AI operations is to use the Opper SDK. Shows how to make structured AI calls with opper.call(), stream real-time responses with opper.stream(), use Pydantic schemas for validation, handle async operations, register AI-powered commands, implement common patterns (extraction, classification, summarization, Q&A), and build complete AI agents. Includes error handling, best practices, and full working examples"
+    "description": "Read when performing AI tasks. Default SDK for all AI operations. Shows opper.call() for structured calls, opper.stream() for real-time responses, Pydantic validation, async operations, AI-powered commands, common patterns (extraction, classification, Q&A)"
   },
   {
     "name": "python-dependencies-guide.md",
-    "description": "Read when installing Python packages or troubleshooting dependency issues in agents. CRITICAL: Shows the correct workflow for installing packages into each agent's isolated virtual environment (VENV). Covers the mandatory installation command pattern using agent's VENV Python, complete workflow (stop → define → install → restart), troubleshooting ModuleNotFoundError and corrupted VENVs, common mistakes (installing in wrong environment), and advanced patterns for pyproject.toml and development dependencies"
+    "description": "Read when installing Python packages or troubleshooting dependency issues. Shows workflow: stop agent, update requirements.txt, install using agent's VENV Python, restart. Covers ModuleNotFoundError fixes, VENV corruption recovery, common mistakes"
+  },
+  {
+    "name": "oauth2-guide.md",
+    "description": "Read when implementing OAuth 2.0 authentication (Gmail, Drive, GitHub, Microsoft). Shows pattern: user credentials in keyring, tokens in local files. Covers async authorization, callback server, token refresh, sidebar updates"
   }
 ]

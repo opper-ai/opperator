@@ -44,6 +44,9 @@ var opperSDKGuideDoc string
 //go:embed docs/python-dependencies-guide.md
 var pythonDependenciesGuideDoc string
 
+//go:embed docs/oauth2-guide.md
+var oauth2GuideDoc string
+
 //go:embed docs/docs.json
 var docsJSON string
 
@@ -138,6 +141,7 @@ func RunReadDocumentation(ctx context.Context, argsJSON string) (string, string)
 		"background-tasks-guide.md":    backgroundTasksGuideDoc,
 		"opper-sdk-guide.md":           opperSDKGuideDoc,
 		"python-dependencies-guide.md": pythonDependenciesGuideDoc,
+		"oauth2-guide.md":              oauth2GuideDoc,
 	}
 
 	var result string
