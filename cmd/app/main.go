@@ -175,7 +175,7 @@ var daemonStopCmd = &cobra.Command{
 		fmt.Printf("Stopping daemon (PID: %d)...\n", pid)
 
 		// Use comprehensive shutdown that kills all processes
-		if err := daemon.StopDaemonComprehensive(pid); err != nil {
+		if err := daemon.Shutdown(pid, nil); err != nil {
 			fmt.Printf("Warning: %v\n", err)
 			fmt.Println("Daemon stop completed with warnings")
 			os.Exit(1)
