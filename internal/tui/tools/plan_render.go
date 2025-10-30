@@ -18,6 +18,7 @@ func init() {
 func registerPlanRenderer() {
 	toolregistry.Register(PlanToolName, toolregistry.Definition{
 		Label: "Manage Plan",
+		Hidden: true,
 		Pending: func(call tooltypes.Call, width int, spinner string) string {
 			var params PlanParams
 			_ = json.Unmarshal([]byte(call.Input), &params)
