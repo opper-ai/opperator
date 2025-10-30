@@ -105,3 +105,68 @@ func (m *MouseHandler) HandleLogsViewportMouse(msg tea.Msg) tea.Cmd {
 	// Marking dirty here causes full sidebar re-render on every scroll (expensive!)
 	return cmd
 }
+
+// HandleCustomSectionViewportsMouse handles mouse events for custom section viewports
+// Returns a command if any viewport was updated, nil otherwise
+func (m *MouseHandler) HandleCustomSectionViewportsMouse(msg tea.Msg, customViewports map[string]*CustomViewportState) tea.Cmd {
+	// Extract mouse information from different message types
+	var mouse tea.Mouse
+	var isMouseEvent bool
+
+	switch msg := msg.(type) {
+	case tea.MouseWheelMsg:
+		mouse = msg.Mouse()
+		isMouseEvent = true
+	case tea.MouseClickMsg:
+		mouse = msg.Mouse()
+		isMouseEvent = true
+	case tea.MouseReleaseMsg:
+		mouse = msg.Mouse()
+		isMouseEvent = true
+	case tea.MouseMotionMsg:
+		mouse = msg.Mouse()
+		isMouseEvent = true
+	}
+
+	if !isMouseEvent {
+		return nil
+	}
+
+	// Check if mouse is within the sidebar area
+	mouseX := mouse.X
+	mouseY := mouse.Y
+
+	sidebarLeft := m.sidebarX
+	sidebarRight := m.sidebarX + m.width + 4 // +4 for margin and padding
+
+	// Check if mouse X is within sidebar bounds
+	if mouseX < sidebarLeft || mouseX >= sidebarRight {
+		return nil
+	}
+
+	// Check each custom section viewport
+	for _, section := range m.sections.CustomSections {
+		// Only check if section is expanded
+		if !m.sections.CustomSectionsExpanded[section.ID] {
+			continue
+		}
+
+		vp, exists := customViewports[section.ID]
+		if !exists || !vp.Inited {
+			continue
+		}
+
+		// Check if mouse Y is within this custom section
+		sectionTop := vp.Y
+		sectionBottom := vp.Y + vp.Height
+
+		if mouseY >= sectionTop && mouseY < sectionBottom {
+			// Mouse is within this section bounds, update viewport
+			var cmd tea.Cmd
+			vp.Viewport, cmd = vp.Viewport.Update(msg)
+			return cmd
+		}
+	}
+
+	return nil
+}

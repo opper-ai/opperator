@@ -20,6 +20,9 @@ type Sidebar struct {
 	logs     *ViewportState
 	nav      *NavigationState
 
+	// Custom section viewports (keyed by section ID)
+	customViewports map[string]*CustomViewportState
+
 	// Navigation helper
 	navHelper *NavigationHelper
 
@@ -40,12 +43,13 @@ func New(prefsStore PreferencesStore) *Sidebar {
 	nav := NewNavigationState()
 
 	s := &Sidebar{
-		prefsStore: prefsStore,
-		agent:      agent,
-		builder:    builder,
-		sections:   sections,
-		logs:       logs,
-		nav:        nav,
+		prefsStore:      prefsStore,
+		agent:           agent,
+		builder:         builder,
+		sections:        sections,
+		logs:            logs,
+		nav:             nav,
+		customViewports: make(map[string]*CustomViewportState),
 	}
 
 	// Create navigation helper
@@ -62,6 +66,13 @@ func New(prefsStore PreferencesStore) *Sidebar {
 
 func (s *Sidebar) initLogsViewport() {
 	s.logs.Init()
+}
+
+func (s *Sidebar) initCustomViewport(sectionID string) {
+	if _, exists := s.customViewports[sectionID]; !exists {
+		s.customViewports[sectionID] = NewCustomViewportState()
+	}
+	s.customViewports[sectionID].Init()
 }
 
 func (s *Sidebar) SetSize(w, h int) {
@@ -183,8 +194,27 @@ func (s *Sidebar) Update(msg tea.Msg) tea.Cmd {
 		s.initLogsViewport()
 	}
 
+	// Initialize viewports for expanded custom sections
+	for _, section := range s.sections.CustomSections {
+		if s.sections.CustomSectionsExpanded[section.ID] {
+			vp, exists := s.customViewports[section.ID]
+			if !exists || !vp.Inited {
+				s.initCustomViewport(section.ID)
+			}
+		}
+	}
+
 	// Handle mouse events for logs viewport
-	return s.mouseHandler.HandleLogsViewportMouse(msg)
+	logsCmd := s.mouseHandler.HandleLogsViewportMouse(msg)
+
+	// Handle mouse events for custom section viewports
+	customCmd := s.mouseHandler.HandleCustomSectionViewportsMouse(msg, s.customViewports)
+
+	// Return the first non-nil command
+	if logsCmd != nil {
+		return logsCmd
+	}
+	return customCmd
 }
 
 func (s *Sidebar) FocusNext() bool {
@@ -763,18 +793,72 @@ func (s *Sidebar) renderCustomSections(state *SidebarRenderState) {
 
 		defaultStyle := t.S().Base.Foreground(t.FgMuted)
 		var content string
+		var renderedSection string
+
 		if expanded {
-			content = ParseMarkupWithStyle(section.Content, defaultStyle)
+			// Initialize viewport for this section
+			s.initCustomViewport(section.ID)
+			vp := s.customViewports[section.ID]
+
+			// Set viewport size
+			boxWidth := s.sectionWidth()
+			vpWidth := boxWidth - 4
+			if vpWidth < 1 {
+				vpWidth = 1
+			}
+
+			// Parse the content with markup styling and manually wrap lines
+			rawContent := ParseMarkupWithStyle(section.Content, defaultStyle)
+
+			// Manually wrap each line to fit within viewport width
+			contentLines := strings.Split(rawContent, "\n")
+			var wrappedLines []string
+			for _, line := range contentLines {
+				if line == "" {
+					wrappedLines = append(wrappedLines, line)
+					continue
+				}
+				// Use lipgloss to wrap the line
+				wrapped := lipgloss.NewStyle().Width(vpWidth).Render(line)
+				wrappedParts := strings.Split(wrapped, "\n")
+				wrappedLines = append(wrappedLines, wrappedParts...)
+			}
+
+			styledContent := strings.Join(wrappedLines, "\n")
+			totalLines := len(wrappedLines)
+
+			// Set viewport height: minimum of total lines or 20 (same as logs)
+			vpHeight := min(totalLines, 20)
+			vp.SetSize(vpWidth, vpHeight)
+			vp.SetContent(styledContent)
+
+			// Get rendered viewport content
+			content = vp.View()
+
+			// Store position for mouse handling
+			vp.Y = state.CumulativeHeight
+
+			// Render with scrollbar if content exceeds viewport
+			if totalLines > vpHeight {
+				renderedSection = boxWithLabel.RenderWithScrollbar(label, content, s.sectionWidth(), vpHeight, totalLines, vp.YOffset())
+			} else {
+				renderedSection = boxWithLabel.Render(label, content, s.sectionWidth())
+			}
+
+			// Update height after rendering
+			vp.Height = lipgloss.Height(renderedSection)
 		} else {
+			// Collapsed: show first line truncated
 			firstLine := section.Content
 			if idx := strings.IndexAny(firstLine, "\n\r"); idx != -1 {
 				firstLine = firstLine[:idx]
 			}
 			truncated := truncateToOneLine(firstLine, s.w-8)
 			content = ParseMarkupWithStyle(truncated, defaultStyle)
+			renderedSection = boxWithLabel.Render(label, content, s.sectionWidth())
 		}
 
-		state.AddSection(boxWithLabel.Render(label, content, s.sectionWidth()))
+		state.AddSection(renderedSection)
 	}
 }
 
