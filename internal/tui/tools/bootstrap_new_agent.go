@@ -200,13 +200,29 @@ func RunBootstrapNewAgent(ctx context.Context, arguments string) (string, string
 	}
 	meta.Steps = append(meta.Steps, "Copied starter template to main.py")
 
+	// Write pyproject.toml
+	pyprojectTemplate, err := templates.FS.ReadFile("python-base/pyproject.toml.template")
+	if err != nil {
+		meta.Error = fmt.Sprintf("failed to read pyproject.toml template: %v", err)
+		mb, _ := json.Marshal(meta)
+		return fmt.Sprintf("Error: %s", meta.Error), string(mb)
+	}
+	pyprojectContent := strings.Replace(string(pyprojectTemplate), "{{AGENT_NAME}}", agentName, -1)
+	pyprojectDst := filepath.Join(agentDir, "pyproject.toml")
+	if err := os.WriteFile(pyprojectDst, []byte(pyprojectContent), 0644); err != nil {
+		meta.Error = fmt.Sprintf("failed to write pyproject.toml: %v", err)
+		mb, _ := json.Marshal(meta)
+		return fmt.Sprintf("Error: %s", meta.Error), string(mb)
+	}
+	meta.Steps = append(meta.Steps, "Created pyproject.toml")
+
 	// Initialize uv project or fallback to venv
 	if err := initializeVenv(agentDir); err != nil {
 		meta.Error = fmt.Sprintf("failed to initialize virtual environment: %v", err)
 		mb, _ := json.Marshal(meta)
 		return fmt.Sprintf("Error: %s", meta.Error), string(mb)
 	}
-	meta.Steps = append(meta.Steps, "Initialized virtual environment")
+	meta.Steps = append(meta.Steps, "Initialized virtual environment and installed dependencies")
 
 	// Update agents.yaml
 	agentsYAMLPath := filepath.Join(configDir, "agents.yaml")
@@ -274,19 +290,47 @@ func RunBootstrapNewAgent(ctx context.Context, arguments string) (string, string
 	return fmt.Sprintf("Successfully bootstrapped agent %q", agentName), string(mb)
 }
 
-// initializeVenv creates a virtual environment using uv or fallback to venv
+// initializeVenv creates a virtual environment using uv or fallback to venv,
+// then installs the agent as an editable package
 func initializeVenv(agentDir string) error {
+	venvPath := filepath.Join(agentDir, ".venv")
+	venvPython := filepath.Join(venvPath, "bin", "python")
+
+	// Step 1: Create virtual environment
 	// Try uv first
 	cmd := exec.Command("uv", "venv", ".venv")
 	cmd.Dir = agentDir
-	if err := cmd.Run(); err == nil {
-		return nil
+	uvAvailable := cmd.Run() == nil
+
+	if !uvAvailable {
+		// Fallback to python -m venv
+		cmd = exec.Command("python3", "-m", "venv", ".venv")
+		cmd.Dir = agentDir
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to create venv: %w", err)
+		}
 	}
 
-	// Fallback to python -m venv
-	cmd = exec.Command("python3", "-m", "venv", ".venv")
-	cmd.Dir = agentDir
-	return cmd.Run()
+	// Step 2: Install agent as editable package (makes opperator/ importable)
+	if uvAvailable {
+		// Use uv pip install with --python flag
+		cmd = exec.Command("uv", "pip", "install", "-e", agentDir, "--python", venvPython)
+		if err := cmd.Run(); err != nil {
+			// If uv pip install fails, try pip fallback
+			cmd = exec.Command(venvPython, "-m", "pip", "install", "-e", agentDir)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to install agent package: %w", err)
+			}
+		}
+	} else {
+		// Use pip directly
+		cmd = exec.Command(venvPython, "-m", "pip", "install", "-e", agentDir)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install agent package: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // addAgentToYAML adds a new agent entry to agents.yaml

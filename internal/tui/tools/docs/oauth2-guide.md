@@ -61,20 +61,22 @@ Follow the standard Opperator dependency installation workflow:
 # 1. Stop the agent (if already running)
 stop_agent(agent_name="invoice-monitor")
 
-# 2. Add dependencies to requirements.txt
-# Create/update ~/.config/opperator/agents/invoice-monitor/requirements.txt
-write(
-    path="~/.config/opperator/agents/invoice-monitor/requirements.txt",
-    content="""google-auth-oauthlib==1.2.0
-google-auth-httplib2==0.2.0
-google-api-python-client==2.108.0
-"""
+# 2. Add dependencies to pyproject.toml
+# Edit ~/.config/opperator/agents/invoice-monitor/pyproject.toml
+edit(
+    path="~/.config/opperator/agents/invoice-monitor/pyproject.toml",
+    old_string='dependencies = []',
+    new_string='''dependencies = [
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-api-python-client>=2.108.0",
+]'''
 )
 
-# 3. Install using agent's VENV Python (CRITICAL: use agent's isolated environment)
+# 3. Install using uv (CRITICAL: targets agent's isolated environment)
 bash("""
-~/.config/opperator/agents/invoice-monitor/.venv/bin/python -m pip install -r \
-~/.config/opperator/agents/invoice-monitor/requirements.txt
+uv pip install ~/.config/opperator/agents/invoice-monitor/ \\
+  --python ~/.config/opperator/agents/invoice-monitor/.venv/bin/python
 """)
 
 # 4. Restart agent
@@ -82,9 +84,9 @@ restart_agent(agent_name="invoice-monitor")
 ```
 
 **Why this command pattern?**
-- Uses the agent's isolated Python interpreter (`.venv/bin/python`)
-- Runs `pip` as a module (`-m pip`) for reliability
-- Installs packages directly into the agent's VENV
+- Uses `pyproject.toml` as the modern dependency manifest
+- `uv pip install` provides 10-100x faster dependency resolution
+- `--python` flag targets the agent's isolated VENV
 - Ensures dependencies are available when agent runs
 
 **3. Set Credentials in Opperator:**
@@ -628,14 +630,15 @@ opperator secret list
 # Stop agent
 stop_agent(agent_name="your-agent")
 
-# Add to ~/.config/opperator/agents/your-agent/requirements.txt:
-# google-auth-oauthlib==1.2.0
-# google-auth-httplib2==0.2.0
-# google-api-python-client==2.108.0
+# Edit ~/.config/opperator/agents/your-agent/pyproject.toml
+# Add to dependencies array:
+#   "google-auth-oauthlib>=1.2.0",
+#   "google-auth-httplib2>=0.2.0",
+#   "google-api-python-client>=2.108.0",
 
-# Install using agent's isolated Python
-~/.config/opperator/agents/your-agent/.venv/bin/python -m pip install -r \
-~/.config/opperator/agents/your-agent/requirements.txt
+# Install using uv with --python flag
+uv pip install ~/.config/opperator/agents/your-agent/ \
+  --python ~/.config/opperator/agents/your-agent/.venv/bin/python
 
 # Restart agent
 restart_agent(agent_name="your-agent")
