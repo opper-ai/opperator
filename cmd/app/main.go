@@ -73,7 +73,7 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		if !hasKey {
-			fmt.Fprintf(os.Stderr, "Opper API key is not configured. Run `./opperator secret create --name=%s` to add one.\n", credentials.OpperAPIKeyName)
+			fmt.Fprintf(os.Stderr, "Opper API key is not configured. Run `./opperator secret create %s` to add one.\n", credentials.OpperAPIKeyName)
 			os.Exit(1)
 		}
 
@@ -461,11 +461,15 @@ var secretCmd = &cobra.Command{
 }
 
 var secretCreateCmd = &cobra.Command{
-	Use:   "create",
+	Use:   "create [name] [value]",
 	Short: "Store a new secret value",
+	Args:  cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, _ := cmd.Flags().GetString("name")
-		value, _ := cmd.Flags().GetString("value")
+		name := args[0]
+		value := ""
+		if len(args) > 1 {
+			value = args[1]
+		}
 		if err := cli.CreateSecret(name, value); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -474,11 +478,15 @@ var secretCreateCmd = &cobra.Command{
 }
 
 var secretUpdateCmd = &cobra.Command{
-	Use:   "update",
+	Use:   "update [name] [value]",
 	Short: "Replace a stored secret value",
+	Args:  cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, _ := cmd.Flags().GetString("name")
-		value, _ := cmd.Flags().GetString("value")
+		name := args[0]
+		value := ""
+		if len(args) > 1 {
+			value = args[1]
+		}
 		if err := cli.UpdateSecret(name, value); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -487,10 +495,11 @@ var secretUpdateCmd = &cobra.Command{
 }
 
 var secretDeleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete [name]",
 	Short: "Remove a stored secret",
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, _ := cmd.Flags().GetString("name")
+		name := args[0]
 		if err := cli.DeleteSecret(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -499,10 +508,11 @@ var secretDeleteCmd = &cobra.Command{
 }
 
 var secretReadCmd = &cobra.Command{
-	Use:   "read",
+	Use:   "read [name]",
 	Short: "Read a secret value",
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, _ := cmd.Flags().GetString("name")
+		name := args[0]
 		value, err := cli.ReadSecret(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -524,10 +534,11 @@ var secretListCmd = &cobra.Command{
 }
 
 var secretStatusCmd = &cobra.Command{
-	Use:   "status",
+	Use:   "status [name]",
 	Short: "Check whether a secret exists",
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name, _ := cmd.Flags().GetString("name")
+		name := args[0]
 		if err := cli.SecretStatus(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -644,18 +655,6 @@ func init() {
 	listCmd.Flags().Bool("running", false, "Only show running agents")
 	listCmd.Flags().Bool("stopped", false, "Only show stopped agents")
 	listCmd.Flags().Bool("crashed", false, "Only show crashed agents")
-	secretCreateCmd.Flags().String("name", "", "Secret identifier (required)")
-	secretCreateCmd.Flags().String("value", "", "Secret value (leave blank to prompt)")
-	secretUpdateCmd.Flags().String("name", "", "Secret identifier (required)")
-	secretUpdateCmd.Flags().String("value", "", "Secret value (leave blank to prompt)")
-	secretDeleteCmd.Flags().String("name", "", "Secret identifier (required)")
-	secretStatusCmd.Flags().String("name", "", "Secret identifier (required)")
-	secretCreateCmd.MarkFlagRequired("name")
-	secretUpdateCmd.MarkFlagRequired("name")
-	secretDeleteCmd.MarkFlagRequired("name")
-	secretStatusCmd.MarkFlagRequired("name")
-	secretReadCmd.Flags().String("name", "", "Secret identifier (required)")
-	secretReadCmd.MarkFlagRequired("name")
 	bootstrapCmd.Flags().StringP("description", "d", "", "Agent description")
 	bootstrapCmd.Flags().Bool("no-start", false, "Skip auto-starting the agent after bootstrap")
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
