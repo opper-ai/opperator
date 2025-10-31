@@ -367,6 +367,33 @@ var restartCmd = &cobra.Command{
 	},
 }
 
+var bootstrapCmd = &cobra.Command{
+	Use:   "bootstrap [name]",
+	Short: "Bootstrap a new agent with SDK and templates",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		description, _ := cmd.Flags().GetString("description")
+		noStart, _ := cmd.Flags().GetBool("no-start")
+		if err := cli.BootstrapAgent(args[0], description, noStart); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var deleteCmd = &cobra.Command{
+	Use:   "delete [name]",
+	Short: "Delete an agent and all its data",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		force, _ := cmd.Flags().GetBool("force")
+		if err := cli.DeleteAgent(args[0], force); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var reloadCmd = &cobra.Command{
 	Use:   "reload",
 	Short: "Reload configuration",
@@ -629,10 +656,15 @@ func init() {
 	secretStatusCmd.MarkFlagRequired("name")
 	secretReadCmd.Flags().String("name", "", "Secret identifier (required)")
 	secretReadCmd.MarkFlagRequired("name")
+	bootstrapCmd.Flags().StringP("description", "d", "", "Agent description")
+	bootstrapCmd.Flags().Bool("no-start", false, "Skip auto-starting the agent after bootstrap")
+	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	agentCmd.AddCommand(listCmd)
 	agentCmd.AddCommand(startCmd)
 	agentCmd.AddCommand(stopCmd)
 	agentCmd.AddCommand(restartCmd)
+	agentCmd.AddCommand(bootstrapCmd)
+	agentCmd.AddCommand(deleteCmd)
 	agentCmd.AddCommand(reloadCmd)
 	agentCmd.AddCommand(logsCmd)
 	agentCmd.AddCommand(commandCmd)

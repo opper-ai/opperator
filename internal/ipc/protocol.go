@@ -34,6 +34,8 @@ const (
 	RequestWatchAllTasks     RequestType = "watch_all_tasks"
 	RequestLifecycleEvent    RequestType = "lifecycle_event"
 	RequestGetAgentConfig    RequestType = "get_agent_config"
+	RequestBootstrapAgent    RequestType = "bootstrap_agent"
+	RequestDeleteAgent       RequestType = "delete_agent"
 )
 
 type Request struct {
@@ -55,6 +57,8 @@ type Request struct {
 	SecretValue   string                 `json:"secret_value,omitempty"`
 	LifecycleType string                 `json:"lifecycle_type,omitempty"`
 	LifecycleData map[string]interface{} `json:"lifecycle_data,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	NoStart       bool                   `json:"no_start,omitempty"`
 }
 
 type Response struct {

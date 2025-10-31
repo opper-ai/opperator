@@ -309,4 +309,42 @@ func (c *Client) ReloadConfig() error {
 	return nil
 }
 
+func (c *Client) BootstrapAgent(name, description string, noStart bool) (string, error) {
+	req := Request{
+		Type:        RequestBootstrapAgent,
+		AgentName:   name,
+		Description: description,
+		NoStart:     noStart,
+	}
+	// Bootstrap can take longer, so use a longer timeout
+	resp, err := c.sendRequestWithTimeout(req, 60*time.Second)
+	if err != nil {
+		return "", err
+	}
+
+	if !resp.Success {
+		return "", fmt.Errorf("%s", resp.Error)
+	}
+
+	// The daemon returns the success message in the Error field for backwards compatibility
+	return resp.Error, nil
+}
+
+func (c *Client) DeleteAgent(name string) error {
+	req := Request{
+		Type:      RequestDeleteAgent,
+		AgentName: name,
+	}
+	resp, err := c.sendRequestWithTimeout(req, 30*time.Second)
+	if err != nil {
+		return err
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("%s", resp.Error)
+	}
+
+	return nil
+}
+
 //

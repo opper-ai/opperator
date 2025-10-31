@@ -424,3 +424,43 @@ func (p *AgentPersistence) saveAsync() {
 	}()
 }
 
+// DeleteAgentData removes an agent's persistent data
+func (p *AgentPersistence) DeleteAgentData(agentName string) error {
+	p.mu.Lock()
+	delete(p.data, agentName)
+
+	// Make a copy of data while holding the lock
+	dataCopy := make(map[string]*AgentPersistentData)
+	for k, v := range p.data {
+		dataCopy[k] = v
+	}
+	p.mu.Unlock()
+
+	// Now save without holding the lock
+	return p.saveData(dataCopy)
+}
+
+// saveData saves the given data to disk without acquiring locks
+func (p *AgentPersistence) saveData(data map[string]*AgentPersistentData) error {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal agent data: %w", err)
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(p.dataFile), 0755); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	if err := os.WriteFile(p.dataFile, jsonData, 0644); err != nil {
+		return fmt.Errorf("failed to write agent data file: %w", err)
+	}
+
+	return nil
+}
+
+// GetDB returns the database connection
+func (p *AgentPersistence) GetDB() *sql.DB {
+	return p.db
+}
+

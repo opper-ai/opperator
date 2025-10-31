@@ -124,6 +124,99 @@ func RestartAgent(name string) error {
 	return nil
 }
 
+func BootstrapAgent(name, description string, noStart bool) error {
+	socketPath, _ := config.GetSocketPath()
+	client, err := ipc.NewClient(socketPath)
+	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
+			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+		}
+		return err
+	}
+	defer client.Close()
+
+	fmt.Printf("Bootstrapping agent '%s'...\n", name)
+	if description != "" {
+		fmt.Printf("Description: %s\n", description)
+	}
+	fmt.Println()
+
+	result, err := client.BootstrapAgent(name, description, noStart)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(result)
+
+	// Get config directory for display
+	configDir, _ := config.GetConfigDir()
+	agentDir := fmt.Sprintf("%s/agents/%s", configDir, name)
+	configFile, _ := config.GetConfigFile()
+
+	fmt.Println()
+	fmt.Println("Agent directory:")
+	fmt.Printf("  cd %s\n", agentDir)
+	fmt.Println()
+	fmt.Println("Configuration updated:")
+	fmt.Printf("  %s\n", configFile)
+	fmt.Println()
+
+	if noStart {
+		fmt.Printf("Agent created but not started. Use 'op agent start %s' to start it.\n", name)
+	} else {
+		fmt.Printf("Agent '%s' is now running. Use 'opperator' to interact with it.\n", name)
+	}
+
+	return nil
+}
+
+func DeleteAgent(name string, force bool) error {
+	socketPath, _ := config.GetSocketPath()
+	client, err := ipc.NewClient(socketPath)
+	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
+			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+		}
+		return err
+	}
+	defer client.Close()
+
+	// Get config directory to display what will be deleted
+	configDir, _ := config.GetConfigDir()
+	agentDir := fmt.Sprintf("%s/agents/%s", configDir, name)
+
+	// Show what will be deleted
+	fmt.Printf("This will permanently delete agent '%s' and all its data:\n", name)
+	fmt.Println()
+	fmt.Println("  - Agent directory and all files")
+	fmt.Printf("    %s\n", agentDir)
+	fmt.Println("  - Agent configuration entry (agents.yaml)")
+	fmt.Println("  - Agent persistent data (agent_data.json)")
+	fmt.Println("  - Agent logs (database and disk)")
+	fmt.Println("  - All async tasks and history")
+	fmt.Println()
+
+	// Confirm unless --force is used
+	if !force {
+		fmt.Printf("Are you sure you want to delete agent '%s'? (y/N): ", name)
+		var response string
+		fmt.Scanln(&response)
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "y" && response != "yes" {
+			fmt.Println("Deletion cancelled.")
+			return nil
+		}
+	}
+
+	fmt.Printf("Deleting agent '%s'...\n", name)
+	if err := client.DeleteAgent(name); err != nil {
+		return err
+	}
+
+	fmt.Printf("Agent '%s' has been successfully deleted.\n", name)
+	return nil
+}
+
 func StopAllAgents() error {
 	socketPath, _ := config.GetSocketPath()
 	client, err := ipc.NewClient(socketPath)

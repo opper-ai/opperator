@@ -681,3 +681,27 @@ func (m *Manager) GetAgentRuntimeStats(agentName string) (restartCount int, tota
 
 	return 0, 0, 0
 }
+
+// DeleteAgentPersistentData removes an agent's persistent data from agent_data.json
+func (m *Manager) DeleteAgentPersistentData(agentName string) error {
+	if m.persistence == nil {
+		return nil
+	}
+	return m.persistence.DeleteAgentData(agentName)
+}
+
+// GetDB returns the database connection from persistence
+func (m *Manager) GetDB() *sql.DB {
+	if m.persistence == nil {
+		return nil
+	}
+	return m.persistence.GetDB()
+}
+
+// UnregisterAgent removes an agent from the manager without reloading config
+func (m *Manager) UnregisterAgent(agentName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.agents, agentName)
+	log.Printf("Agent %s unregistered from manager", agentName)
+}

@@ -1333,6 +1333,62 @@ func (m *Manager) DeleteTasksByCall(ctx context.Context, callID string) (int, er
 	return int(rows), nil
 }
 
+func (m *Manager) DeleteTasksByAgent(ctx context.Context, agentName string) (int, error) {
+	if m == nil || m.db == nil {
+		return 0, fmt.Errorf("task manager not initialised")
+	}
+	trimmed := strings.TrimSpace(agentName)
+	if trimmed == "" {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.mu.Lock()
+	var cancels []context.CancelFunc
+	var removedIDs []string
+	for id, task := range m.tasks {
+		if task == nil {
+			continue
+		}
+		if strings.TrimSpace(task.AgentName) != trimmed {
+			continue
+		}
+		delete(m.tasks, id)
+		m.discarded[id] = struct{}{}
+		if cancel := m.cancelTaskLocked(id); cancel != nil {
+			cancels = append(cancels, cancel)
+		}
+		removedIDs = append(removedIDs, id)
+	}
+	m.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`DELETE FROM tool_task_progress WHERE task_id IN (SELECT id FROM tool_tasks WHERE agent_name = ?)`, trimmed); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM tool_tasks WHERE agent_name = ?`, trimmed)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	m.pruneOrphanedProgress(ctx)
+	rows, _ := res.RowsAffected()
+	for _, id := range removedIDs {
+		m.finishWatchers(id, TaskEvent{Type: TaskEventDeleted})
+	}
+	return int(rows), nil
+}
+
 func (m *Manager) loadFromDatabase() error {
 	if m == nil || m.db == nil {
 		return fmt.Errorf("database handle is required")

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,8 +22,10 @@ import (
 	"opperator/internal/taskqueue"
 	"opperator/pkg/migration"
 	"tui/components/sidebar"
+	"tui/tools"
 
 	_ "modernc.org/sqlite"
+	"gopkg.in/yaml.v3"
 )
 
 type Server struct {
@@ -575,6 +578,10 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 			return ipc.Response{Success: false, Error: err.Error()}
 		}
 		return ipc.Response{Success: true, ProcessRoot: ag.Config.ProcessRoot}
+	case ipc.RequestBootstrapAgent:
+		return s.bootstrapAgent(req)
+	case ipc.RequestDeleteAgent:
+		return s.deleteAgent(req)
 	default:
 		return ipc.Response{Success: false, Error: "unknown request type"}
 	}
@@ -660,6 +667,170 @@ func (s *Server) listSecrets() ipc.Response {
 		return ipc.Response{Success: false, Error: err.Error()}
 	}
 	return ipc.Response{Success: true, Secrets: names}
+}
+
+func (s *Server) bootstrapAgent(req ipc.Request) ipc.Response {
+	agentName := strings.TrimSpace(req.AgentName)
+	if agentName == "" {
+		return ipc.Response{Success: false, Error: "agent name is required"}
+	}
+
+	// Prepare parameters for bootstrap
+	params := map[string]string{
+		"agent_name": agentName,
+	}
+	if req.Description != "" {
+		params["description"] = req.Description
+	}
+
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to prepare parameters: %v", err)}
+	}
+
+	// Call the bootstrap function
+	ctx := context.Background()
+	result, _ := tools.RunBootstrapNewAgent(ctx, string(paramsJSON))
+
+	// Check for errors in the result
+	if strings.HasPrefix(result, "Error:") {
+		return ipc.Response{Success: false, Error: strings.TrimPrefix(result, "Error: ")}
+	}
+
+	// If NoStart flag is set, stop the agent that was auto-started
+	if req.NoStart {
+		if err := s.manager.StopAgent(agentName); err != nil {
+			log.Printf("Warning: failed to stop agent after bootstrap: %v", err)
+		}
+	}
+
+	return ipc.Response{Success: true, Error: result}
+}
+
+func (s *Server) deleteAgent(req ipc.Request) ipc.Response {
+	agentName := strings.TrimSpace(req.AgentName)
+	if agentName == "" {
+		return ipc.Response{Success: false, Error: "agent name is required"}
+	}
+
+	log.Printf("Starting deletion of agent: %s", agentName)
+
+	// Get agent to check if it exists and get its directory
+	ag, err := s.manager.GetAgent(agentName)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("agent not found: %v", err)}
+	}
+
+	// Get the agent's process root for directory deletion
+	processRoot := ag.Config.ProcessRoot
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to get config directory: %v", err)}
+	}
+	agentDir := filepath.Join(configDir, processRoot)
+
+	// Step 1: Stop the agent if it's running
+	status := ag.GetStatus()
+	if status == agent.StatusRunning {
+		log.Printf("Stopping agent %s before deletion", agentName)
+		if err := s.manager.StopAgent(agentName); err != nil {
+			log.Printf("Warning: failed to stop agent %s: %v", agentName, err)
+		}
+		// Give it a moment to stop
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Step 2: Delete all async tasks associated with this agent
+	if s.tasks != nil {
+		log.Printf("Deleting async tasks for agent %s", agentName)
+		ctx := context.Background()
+		if _, err := s.tasks.DeleteTasksByAgent(ctx, agentName); err != nil {
+			log.Printf("Warning: failed to delete tasks for agent %s: %v", agentName, err)
+		}
+	}
+
+	// Step 3: Remove from agents.yaml
+	log.Printf("Removing agent %s from configuration", agentName)
+	configFile, err := config.GetConfigFile()
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to get config file: %v", err)}
+	}
+
+	// Read the current config
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to read config: %v", err)}
+	}
+
+	var agentsConfig struct {
+		Agents []agent.AgentConfig `yaml:"agents"`
+	}
+	if err := yaml.Unmarshal(data, &agentsConfig); err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to parse config: %v", err)}
+	}
+
+	// Filter out the agent to delete
+	newAgents := []agent.AgentConfig{}
+	for _, a := range agentsConfig.Agents {
+		if a.Name != agentName {
+			newAgents = append(newAgents, a)
+		}
+	}
+	agentsConfig.Agents = newAgents
+
+	// Write back the config
+	newData, err := yaml.Marshal(agentsConfig)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to marshal config: %v", err)}
+	}
+
+	if err := os.WriteFile(configFile, newData, 0644); err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to write config: %v", err)}
+	}
+
+	// Step 4: Reload configuration to refresh the manager (this picks up agents.yaml changes)
+	log.Printf("Reloading configuration after agent deletion")
+	if err := s.manager.ReloadConfigManual(); err != nil {
+		log.Printf("Warning: failed to reload config: %v", err)
+		// Don't fail the deletion if reload fails
+	}
+
+	// Step 5: Delete from agent_data.json (fast)
+	log.Printf("Removing agent %s from agent_data.json", agentName)
+	if err := s.manager.DeleteAgentPersistentData(agentName); err != nil {
+		log.Printf("Warning: failed to delete persistent data for agent %s: %v", agentName, err)
+	}
+
+	// Step 6: Delete remaining data asynchronously to avoid blocking
+	go func() {
+		// Delete agent logs from database
+		log.Printf("Deleting database logs for agent %s", agentName)
+		if s.manager.GetDB() != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := s.manager.GetDB().ExecContext(ctx, `DELETE FROM agent_logs WHERE agent_name = ?`, agentName); err != nil {
+				log.Printf("Warning: failed to delete database logs for agent %s: %v", agentName, err)
+			}
+		}
+
+		// Delete agent log file from disk
+		logFile := filepath.Join(configDir, "logs", fmt.Sprintf("%s.log", agentName))
+		log.Printf("Deleting log file: %s", logFile)
+		if err := os.Remove(logFile); err != nil && !os.IsNotExist(err) {
+			log.Printf("Warning: failed to delete log file %s: %v", logFile, err)
+		}
+
+		// Delete the agent directory
+		log.Printf("Deleting agent directory: %s", agentDir)
+		if err := os.RemoveAll(agentDir); err != nil {
+			log.Printf("Warning: failed to delete agent directory %s: %v", agentDir, err)
+		}
+
+		log.Printf("Cleanup completed for agent: %s", agentName)
+	}()
+
+	log.Printf("Successfully deleted agent: %s", agentName)
+	return ipc.Response{Success: true}
 }
 
 // listAgents assembles process info for all agents.
