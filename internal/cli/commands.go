@@ -13,30 +13,132 @@ import (
 	"opperator/internal/ipc"
 )
 
-func ListAgents(runningOnly, stoppedOnly, crashedOnly bool) error {
-	client, err := ipc.NewClientFromRegistry("local")
+// findAgentDaemon searches all daemons to find which one has the specified agent
+// Returns the daemon name, or error if not found or ambiguous
+func findAgentDaemon(agentName string) (string, error) {
+	registry, err := config.LoadDaemonRegistry()
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+		return "", fmt.Errorf("failed to load daemon registry: %w", err)
+	}
+
+	var foundDaemons []string
+
+	for _, daemon := range registry.Daemons {
+		if !daemon.Enabled {
+			continue
 		}
-		return err
-	}
-	defer client.Close()
 
-	processes, err := client.ListAgents()
+		client, err := ipc.NewClientWithAuth(daemon.Address, daemon.AuthToken)
+		if err != nil {
+			continue
+		}
+
+		processes, err := client.ListAgents()
+		client.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, p := range processes {
+			if p.Name == agentName {
+				foundDaemons = append(foundDaemons, daemon.Name)
+				break
+			}
+		}
+	}
+
+	if len(foundDaemons) == 0 {
+		return "", fmt.Errorf("agent '%s' not found on any daemon", agentName)
+	}
+
+	if len(foundDaemons) > 1 {
+		return "", fmt.Errorf("agent '%s' exists on multiple daemons: %v. Please specify --daemon", agentName, foundDaemons)
+	}
+
+	return foundDaemons[0], nil
+}
+
+// getClientForAgent returns a client for the daemon that has the specified agent
+// If daemonName is provided, uses that. Otherwise, searches for the agent.
+func getClientForAgent(agentName, daemonName string) (*ipc.Client, string, error) {
+	// If daemon not specified, find it
+	if daemonName == "" {
+		foundDaemon, err := findAgentDaemon(agentName)
+		if err != nil {
+			return nil, "", err
+		}
+		daemonName = foundDaemon
+	}
+
+	// Get client for the daemon
+	client, err := ipc.NewClientFromRegistry(daemonName)
 	if err != nil {
-		return err
+		return nil, "", fmt.Errorf("failed to connect to daemon '%s': %w", daemonName, err)
 	}
 
-	if len(processes) == 0 {
+	return client, daemonName, nil
+}
+
+func ListAgents(runningOnly, stoppedOnly, crashedOnly bool, daemonFilter string) error {
+	// Load daemon registry
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		return fmt.Errorf("failed to load daemon registry: %w", err)
+	}
+
+	// Collect agents from all daemons
+	type AgentWithDaemon struct {
+		Agent      *ipc.ProcessInfo
+		DaemonName string
+	}
+	var allAgents []AgentWithDaemon
+
+	for _, daemon := range registry.Daemons {
+		// Skip if filtering by daemon
+		if daemonFilter != "" && daemon.Name != daemonFilter {
+			continue
+		}
+
+		// Skip disabled daemons
+		if !daemon.Enabled {
+			continue
+		}
+
+		// Connect to daemon
+		client, err := ipc.NewClientWithAuth(daemon.Address, daemon.AuthToken)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to connect to daemon '%s': %v\n", daemon.Name, err)
+			continue
+		}
+
+		// List agents
+		processes, err := client.ListAgents()
+		client.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to list agents from '%s': %v\n", daemon.Name, err)
+			continue
+		}
+
+		// Add to collection
+		for _, p := range processes {
+			allAgents = append(allAgents, AgentWithDaemon{
+				Agent:      p,
+				DaemonName: daemon.Name,
+			})
+		}
+	}
+
+	if len(allAgents) == 0 {
 		fmt.Println("No agents configured")
 		return nil
 	}
 
-	fmt.Printf("%-20s %-10s %-10s %-8s %s\n", "NAME", "STATUS", "PID", "UPTIME", "DESCRIPTION")
-	fmt.Printf("%-20s %-10s %-10s %-8s %s\n", "----", "------", "---", "------", "-----------")
+	fmt.Printf("%-15s %-20s %-10s %-10s %-8s %s\n", "DAEMON", "NAME", "STATUS", "PID", "UPTIME", "DESCRIPTION")
+	fmt.Printf("%-15s %-20s %-10s %-10s %-8s %s\n", "------", "----", "------", "---", "------", "-----------")
 
-	for _, p := range processes {
+	for _, item := range allAgents {
+		p := item.Agent
+
 		// Apply optional filters
 		if runningOnly && string(p.Status) != "running" {
 			continue
@@ -47,6 +149,7 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool) error {
 		if crashedOnly && string(p.Status) != "crashed" {
 			continue
 		}
+
 		status := string(p.Status)
 		pid := "-"
 		if p.PID > 0 {
@@ -63,18 +166,15 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool) error {
 			desc = "-"
 		}
 
-		fmt.Printf("%-20s %-10s %-10s %-8s %s\n", p.Name, status, pid, uptime, desc)
+		fmt.Printf("%-15s %-20s %-10s %-10s %-8s %s\n", item.DaemonName, p.Name, status, pid, uptime, desc)
 	}
 
 	return nil
 }
 
-func StartAgent(name string) error {
-	client, err := ipc.NewClientFromRegistry("local")
+func StartAgent(name, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
-		}
 		return err
 	}
 	defer client.Close()
@@ -82,16 +182,13 @@ func StartAgent(name string) error {
 	if err := client.StartAgent(name); err != nil {
 		return err
 	}
-	fmt.Printf("Started agent: %s\n", name)
+	fmt.Printf("Started agent '%s' on daemon '%s'\n", name, foundDaemon)
 	return nil
 }
 
-func StopAgent(name string) error {
-	client, err := ipc.NewClientFromRegistry("local")
+func StopAgent(name, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
-		}
 		return err
 	}
 	defer client.Close()
@@ -99,16 +196,13 @@ func StopAgent(name string) error {
 	if err := client.StopAgent(name); err != nil {
 		return err
 	}
-	fmt.Printf("Stopped agent: %s\n", name)
+	fmt.Printf("Stopped agent '%s' on daemon '%s'\n", name, foundDaemon)
 	return nil
 }
 
-func RestartAgent(name string) error {
-	client, err := ipc.NewClientFromRegistry("local")
+func RestartAgent(name, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
-		}
 		return err
 	}
 	defer client.Close()
@@ -116,7 +210,7 @@ func RestartAgent(name string) error {
 	if err := client.RestartAgent(name); err != nil {
 		return err
 	}
-	fmt.Printf("Restarted agent: %s\n", name)
+	fmt.Printf("Restarted agent '%s' on daemon '%s'\n", name, foundDaemon)
 	return nil
 }
 
@@ -245,12 +339,9 @@ func ReloadConfig() error {
 	return nil
 }
 
-func InvokeCommand(name, command string, args map[string]interface{}, timeout time.Duration) error {
-	client, err := ipc.NewClientFromRegistry("local")
+func InvokeCommand(name, command string, args map[string]interface{}, timeout time.Duration, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
-		}
 		return err
 	}
 	defer client.Close()
@@ -267,7 +358,7 @@ func InvokeCommand(name, command string, args map[string]interface{}, timeout ti
 		return fmt.Errorf("%s", resp.Error)
 	}
 
-	fmt.Printf("Command '%s' succeeded on %s\n", command, name)
+	fmt.Printf("Command '%s' succeeded on agent '%s' (daemon: %s)\n", command, name, foundDaemon)
 	if resp.Result != nil {
 		if data, err := json.MarshalIndent(resp.Result, "", "  "); err == nil {
 			fmt.Println(string(data))
@@ -278,12 +369,9 @@ func InvokeCommand(name, command string, args map[string]interface{}, timeout ti
 	return nil
 }
 
-func ListAgentCommands(name string) error {
-	client, err := ipc.NewClientFromRegistry("local")
+func ListAgentCommands(name, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
-		}
 		return err
 	}
 	defer client.Close()
@@ -294,11 +382,11 @@ func ListAgentCommands(name string) error {
 	}
 
 	if len(commands) == 0 {
-		fmt.Printf("Agent %s has no registered commands\n", name)
+		fmt.Printf("Agent '%s' on daemon '%s' has no registered commands\n", name, foundDaemon)
 		return nil
 	}
 
-	fmt.Printf("Commands for %s:\n", name)
+	fmt.Printf("Commands for '%s' (daemon: %s):\n", name, foundDaemon)
 	for _, cmd := range commands {
 		displayName := strings.TrimSpace(cmd.Name)
 		if displayName == "" {
@@ -358,17 +446,15 @@ func ShowToolTaskMetrics() error {
 	return nil
 }
 
-func GetLogs(name string, follow bool, lines int) error {
-	client, err := ipc.NewClientFromRegistry("local")
+func GetLogs(name string, follow bool, lines int, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
-		}
 		return err
 	}
 	defer client.Close()
 
 	if follow {
+		fmt.Printf("Following logs for '%s' on daemon '%s'...\n", name, foundDaemon)
 		return streamLogs(client, name)
 	}
 

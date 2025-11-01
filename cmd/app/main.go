@@ -355,11 +355,13 @@ var agentCmd = &cobra.Command{
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all agents",
+	Short: "List all agents from all daemons",
 	Run: func(cmd *cobra.Command, args []string) {
 		runningOnly, _ := cmd.Flags().GetBool("running")
 		stoppedOnly, _ := cmd.Flags().GetBool("stopped")
 		crashedOnly, _ := cmd.Flags().GetBool("crashed")
+		daemonFilter, _ := cmd.Flags().GetString("daemon")
+
 		// Ensure only one filter is used at a time
 		filters := 0
 		if runningOnly {
@@ -375,7 +377,7 @@ var listCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, "Use at most one of --running, --stopped, --crashed")
 			os.Exit(1)
 		}
-		if err := cli.ListAgents(runningOnly, stoppedOnly, crashedOnly); err != nil {
+		if err := cli.ListAgents(runningOnly, stoppedOnly, crashedOnly, daemonFilter); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -384,10 +386,11 @@ var listCmd = &cobra.Command{
 
 var startCmd = &cobra.Command{
 	Use:   "start [name]",
-	Short: "Start an agent",
+	Short: "Start an agent (auto-detects daemon or use --daemon)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := cli.StartAgent(args[0]); err != nil {
+		daemon, _ := cmd.Flags().GetString("daemon")
+		if err := cli.StartAgent(args[0], daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -396,10 +399,11 @@ var startCmd = &cobra.Command{
 
 var stopCmd = &cobra.Command{
 	Use:   "stop [name]",
-	Short: "Stop an agent",
+	Short: "Stop an agent (auto-detects daemon or use --daemon)",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		stopAll, _ := cmd.Flags().GetBool("all")
+		daemon, _ := cmd.Flags().GetString("daemon")
 
 		if stopAll {
 			if err := cli.StopAllAgents(); err != nil {
@@ -407,7 +411,7 @@ var stopCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		} else if len(args) == 1 {
-			if err := cli.StopAgent(args[0]); err != nil {
+			if err := cli.StopAgent(args[0], daemon); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -420,10 +424,11 @@ var stopCmd = &cobra.Command{
 
 var restartCmd = &cobra.Command{
 	Use:   "restart [name]",
-	Short: "Restart an agent",
+	Short: "Restart an agent (auto-detects daemon or use --daemon)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := cli.RestartAgent(args[0]); err != nil {
+		daemon, _ := cmd.Flags().GetString("daemon")
+		if err := cli.RestartAgent(args[0], daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -470,13 +475,14 @@ var reloadCmd = &cobra.Command{
 
 var logsCmd = &cobra.Command{
 	Use:   "logs [name]",
-	Short: "Get logs from an agent",
+	Short: "Get logs from an agent (auto-detects daemon or use --daemon)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		follow, _ := cmd.Flags().GetBool("follow")
 		lines, _ := cmd.Flags().GetInt("lines")
+		daemon, _ := cmd.Flags().GetString("daemon")
 
-		if err := cli.GetLogs(args[0], follow, lines); err != nil {
+		if err := cli.GetLogs(args[0], follow, lines, daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -485,11 +491,12 @@ var logsCmd = &cobra.Command{
 
 var commandCmd = &cobra.Command{
 	Use:   "command [name] [command]",
-	Short: "Send a command to a managed agent",
+	Short: "Send a command to a managed agent (auto-detects daemon or use --daemon)",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		argsJSON, _ := cmd.Flags().GetString("args")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
+		daemon, _ := cmd.Flags().GetString("daemon")
 
 		var payload map[string]interface{}
 		if argsJSON != "" {
@@ -499,7 +506,7 @@ var commandCmd = &cobra.Command{
 			}
 		}
 
-		if err := cli.InvokeCommand(args[0], args[1], payload, timeout); err != nil {
+		if err := cli.InvokeCommand(args[0], args[1], payload, timeout, daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -508,10 +515,11 @@ var commandCmd = &cobra.Command{
 
 var listCommandsCmd = &cobra.Command{
 	Use:   "commands [name]",
-	Short: "List available commands for an agent",
+	Short: "List available commands for an agent (auto-detects daemon or use --daemon)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := cli.ListAgentCommands(args[0]); err != nil {
+		daemon, _ := cmd.Flags().GetString("daemon")
+		if err := cli.ListAgentCommands(args[0], daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -710,14 +718,21 @@ func init() {
 
 	rootCmd.Flags().StringVar(&tuiCPUProfilePath, "tui-cpuprofile", "", "Write TUI CPU profile to file")
 	stopCmd.Flags().BoolP("all", "a", false, "Stop all agents")
+	stopCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 	logsCmd.Flags().BoolP("follow", "f", false, "Follow log output (stream mode)")
 	logsCmd.Flags().IntP("lines", "n", 0, "Show last N lines (0 = all lines)")
+	logsCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
+	startCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
+	restartCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 	commandCmd.Flags().String("args", "", "JSON object to pass as command arguments")
 	commandCmd.Flags().Duration("timeout", 10*time.Second, "How long to wait for the command response")
+	commandCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
+	listCommandsCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 
 	listCmd.Flags().Bool("running", false, "Only show running agents")
 	listCmd.Flags().Bool("stopped", false, "Only show stopped agents")
 	listCmd.Flags().Bool("crashed", false, "Only show crashed agents")
+	listCmd.Flags().String("daemon", "", "Filter agents by daemon name")
 	bootstrapCmd.Flags().StringP("description", "d", "", "Agent description")
 	bootstrapCmd.Flags().Bool("no-start", false, "Skip auto-starting the agent after bootstrap")
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
