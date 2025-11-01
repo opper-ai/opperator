@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"opperator/internal/config"
 	"opperator/internal/ipc"
 )
 
@@ -18,8 +17,7 @@ type AsyncListOptions struct {
 }
 
 func ListAsyncTasks(opts AsyncListOptions) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -106,8 +104,7 @@ func ListAsyncTasks(opts AsyncListOptions) error {
 }
 
 func ShowAsyncTask(id string) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -130,8 +127,7 @@ func ShowAsyncTask(id string) error {
 }
 
 func DeleteAsyncTask(id string) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")

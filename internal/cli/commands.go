@@ -14,8 +14,7 @@ import (
 )
 
 func ListAgents(runningOnly, stoppedOnly, crashedOnly bool) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -71,8 +70,7 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool) error {
 }
 
 func StartAgent(name string) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -89,8 +87,7 @@ func StartAgent(name string) error {
 }
 
 func StopAgent(name string) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -107,8 +104,7 @@ func StopAgent(name string) error {
 }
 
 func RestartAgent(name string) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -125,8 +121,7 @@ func RestartAgent(name string) error {
 }
 
 func BootstrapAgent(name, description string, noStart bool) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -171,8 +166,7 @@ func BootstrapAgent(name, description string, noStart bool) error {
 }
 
 func DeleteAgent(name string, force bool) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -218,8 +212,7 @@ func DeleteAgent(name string, force bool) error {
 }
 
 func StopAllAgents() error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -236,8 +229,7 @@ func StopAllAgents() error {
 }
 
 func ReloadConfig() error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -254,8 +246,7 @@ func ReloadConfig() error {
 }
 
 func InvokeCommand(name, command string, args map[string]interface{}, timeout time.Duration) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -288,8 +279,7 @@ func InvokeCommand(name, command string, args map[string]interface{}, timeout ti
 }
 
 func ListAgentCommands(name string) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -342,8 +332,7 @@ func ListAgentCommands(name string) error {
 }
 
 func ShowToolTaskMetrics() error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
@@ -370,8 +359,7 @@ func ShowToolTaskMetrics() error {
 }
 
 func GetLogs(name string, follow bool, lines int) error {
-	socketPath, _ := config.GetSocketPath()
-	client, err := ipc.NewClient(socketPath)
+	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
 			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")

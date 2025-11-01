@@ -177,6 +177,18 @@ func (s *Server) Start() (err error) {
 
 	log.Printf("Daemon started, listening on %s", socketPath)
 
+	// Optionally start TCP listener if configured
+	tcpPort := os.Getenv("OPPERATOR_TCP_PORT")
+	if tcpPort != "" {
+		authToken := os.Getenv("OPPERATOR_AUTH_TOKEN")
+		if authToken == "" {
+			log.Printf("WARNING: TCP port specified but OPPERATOR_AUTH_TOKEN not set!")
+			log.Printf("WARNING: TCP listener will not be started for security reasons")
+		} else {
+			go s.startTCPListener(tcpPort, authToken)
+		}
+	}
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -190,6 +202,127 @@ func (s *Server) Start() (err error) {
 			return fmt.Errorf("daemon accept: %w", err)
 		}
 		go s.handleConnection(conn)
+	}
+}
+
+// startTCPListener starts a TCP listener for remote connections
+func (s *Server) startTCPListener(port, authToken string) {
+	addr := ":" + port
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Printf("TCP: Failed to start TCP listener on %s: %v", addr, err)
+		return
+	}
+	defer listener.Close()
+
+	log.Printf("TCP: Started TCP listener on %s (auth enabled)", addr)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				log.Printf("TCP: temporary accept error: %v", err)
+				continue
+			}
+			log.Printf("TCP: Accept error: %v", err)
+			return
+		}
+
+		go s.handleTCPConnection(conn, authToken)
+	}
+}
+
+// handleTCPConnection handles a TCP connection with authentication
+func (s *Server) handleTCPConnection(conn net.Conn, expectedToken string) {
+	defer conn.Close()
+	connID := fmt.Sprintf("TCP-%p", conn)
+	log.Printf("[%s] New TCP connection from %s", connID, conn.RemoteAddr())
+
+	// Set timeout for auth phase
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// Read auth line
+	reader := bufio.NewReader(conn)
+	authLine, err := reader.ReadString('\n')
+	if err != nil {
+		log.Printf("[%s] Failed to read auth: %v", connID, err)
+		return
+	}
+
+	authLine = strings.TrimSpace(authLine)
+
+	// Parse auth command: "AUTH <token>"
+	parts := strings.SplitN(authLine, " ", 2)
+	if len(parts) != 2 || parts[0] != "AUTH" {
+		log.Printf("[%s] Invalid auth format", connID)
+		conn.Write([]byte("ERR invalid auth format\n"))
+		return
+	}
+
+	token := parts[1]
+	if token != expectedToken {
+		log.Printf("[%s] Authentication failed: invalid token", connID)
+		conn.Write([]byte("ERR invalid token\n"))
+		return
+	}
+
+	// Auth successful
+	log.Printf("[%s] Authentication successful", connID)
+	conn.Write([]byte("OK\n"))
+
+	// Clear deadline for normal operation
+	conn.SetDeadline(time.Time{})
+
+	// Now handle as normal connection
+	s.handleConnectionAuthenticated(conn, connID, reader)
+}
+
+// handleConnectionAuthenticated handles an authenticated connection
+func (s *Server) handleConnectionAuthenticated(conn net.Conn, connID string, reader *bufio.Reader) {
+	log.Printf("[%s] Connection authenticated, switching to request mode", connID)
+
+	requestCount := 0
+	for {
+		data, err := reader.ReadBytes('\n')
+		if err != nil {
+			log.Printf("[%s] Connection closed after %d requests", connID, requestCount)
+			return
+		}
+
+		req, err := ipc.DecodeRequest(data)
+		if err != nil {
+			log.Printf("[%s] Invalid request: %v", connID, err)
+			resp := ipc.Response{Success: false, Error: "invalid request"}
+			b, _ := ipc.EncodeResponse(resp)
+			_, _ = conn.Write(append(b, '\n'))
+			continue
+		}
+
+		requestCount++
+		log.Printf("[%s] Request #%d: type=%s, agent=%s", connID, requestCount, req.Type, req.AgentName)
+
+		if req.Type == ipc.RequestWatchToolTask {
+			log.Printf("[%s] Switching to tool task streaming mode", connID)
+			s.streamToolTask(conn, req)
+			return
+		}
+
+		if req.Type == ipc.RequestWatchAgentState {
+			log.Printf("[%s] Switching to agent state streaming mode", connID)
+			s.streamAgentState(conn, req)
+			return
+		}
+
+		if req.Type == ipc.RequestWatchAllTasks {
+			log.Printf("[%s] Switching to task streaming mode", connID)
+			s.streamAllTasks(conn, req)
+			return
+		}
+
+		resp := s.processRequest(req)
+		b, _ := ipc.EncodeResponse(resp)
+		_, _ = conn.Write(append(b, '\n'))
+		log.Printf("[%s] Request #%d completed: success=%v", connID, requestCount, resp.Success)
 	}
 }
 

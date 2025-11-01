@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"opperator/internal/config"
 	"opperator/internal/protocol"
 )
 
@@ -16,13 +17,76 @@ type Client struct {
 	conn net.Conn
 }
 
-func NewClient(socketPath string) (*Client, error) {
-	conn, err := net.Dial("unix", socketPath)
+// NewClient creates a new IPC client that can connect via Unix socket or TCP
+// address formats:
+//   - unix:///path/to/socket.sock
+//   - tcp://hostname:port
+//   - /path/to/socket.sock (legacy, assumes unix socket)
+func NewClient(address string) (*Client, error) {
+	return NewClientWithAuth(address, "")
+}
+
+// NewClientWithAuth creates a new IPC client with optional authentication
+func NewClientWithAuth(address, authToken string) (*Client, error) {
+	var network, addr string
+
+	// Parse address scheme
+	if strings.HasPrefix(address, "unix://") {
+		network = "unix"
+		addr = strings.TrimPrefix(address, "unix://")
+	} else if strings.HasPrefix(address, "tcp://") {
+		network = "tcp"
+		addr = strings.TrimPrefix(address, "tcp://")
+	} else {
+		// Legacy format - assume unix socket
+		network = "unix"
+		addr = address
+	}
+
+	// Establish connection
+	conn, err := net.DialTimeout(network, addr, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
 
+	// For TCP connections, perform authentication handshake
+	if network == "tcp" {
+		if err := performAuthHandshake(conn, authToken); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("authentication failed: %w", err)
+		}
+	}
+
 	return &Client{conn: conn}, nil
+}
+
+// performAuthHandshake sends the auth token and waits for confirmation
+func performAuthHandshake(conn net.Conn, token string) error {
+	// Set timeout for auth handshake
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	defer conn.SetDeadline(time.Time{})
+
+	// Send auth token
+	authMsg := fmt.Sprintf("AUTH %s\n", token)
+	if _, err := conn.Write([]byte(authMsg)); err != nil {
+		return fmt.Errorf("failed to send auth token: %w", err)
+	}
+
+	// Read response
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("failed to read auth response: %w", err)
+		}
+		return fmt.Errorf("no auth response from server")
+	}
+
+	response := strings.TrimSpace(scanner.Text())
+	if response != "OK" {
+		return fmt.Errorf("auth rejected: %s", response)
+	}
+
+	return nil
 }
 
 func (c *Client) Close() error {
@@ -345,6 +409,25 @@ func (c *Client) DeleteAgent(name string) error {
 	}
 
 	return nil
+}
+
+// NewClientFromRegistry creates a client using daemon configuration from the registry
+func NewClientFromRegistry(daemonName string) (*Client, error) {
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load daemon registry: %w", err)
+	}
+
+	daemon, err := registry.GetDaemon(daemonName)
+	if err != nil {
+		return nil, err
+	}
+
+	if !daemon.Enabled {
+		return nil, fmt.Errorf("daemon '%s' is disabled", daemonName)
+	}
+
+	return NewClientWithAuth(daemon.Address, daemon.AuthToken)
 }
 
 //

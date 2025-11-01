@@ -220,6 +220,69 @@ var daemonMetricsCmd = &cobra.Command{
 	},
 }
 
+var daemonAddCmd = &cobra.Command{
+	Use:   "add [name] [address]",
+	Short: "Add or update a daemon connection",
+	Long: `Add a new daemon to the registry or update an existing one.
+
+Address formats:
+  unix:///path/to/socket.sock  (local Unix socket)
+  tcp://hostname:port          (remote TCP connection)
+
+Examples:
+  op daemon add local unix:///tmp/opperator.sock
+  op daemon add production tcp://vps.example.com:9999 --token=$PROD_TOKEN
+  op daemon add staging tcp://192.168.1.100:9999 --enabled=false`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		name := args[0]
+		address := args[1]
+		token, _ := cmd.Flags().GetString("token")
+		enabled, _ := cmd.Flags().GetBool("enabled")
+
+		if err := cli.AddDaemon(name, address, token, enabled); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var daemonListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all configured daemons",
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := cli.ListDaemons(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var daemonRemoveCmd = &cobra.Command{
+	Use:   "remove [name]",
+	Short: "Remove a daemon from the registry",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		force, _ := cmd.Flags().GetBool("force")
+		if err := cli.RemoveDaemon(args[0], force); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var daemonTestCmd = &cobra.Command{
+	Use:   "test [name]",
+	Short: "Test connectivity to a daemon",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := cli.TestDaemon(args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var asyncCmd = &cobra.Command{
 	Use:   "async",
 	Short: "Inspect daemon async tasks",
@@ -679,6 +742,17 @@ func init() {
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonMetricsCmd)
+	daemonCmd.AddCommand(daemonAddCmd)
+	daemonCmd.AddCommand(daemonListCmd)
+	daemonCmd.AddCommand(daemonRemoveCmd)
+	daemonCmd.AddCommand(daemonTestCmd)
+
+	// Daemon add flags
+	daemonAddCmd.Flags().String("token", "", "Authentication token (can use env var: --token=$MY_TOKEN)")
+	daemonAddCmd.Flags().Bool("enabled", true, "Enable the daemon connection")
+
+	// Daemon remove flags
+	daemonRemoveCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
 	asyncListCmd.Flags().String("status", "", "Filter tasks by status (pending|complete|failed)")
 	asyncListCmd.Flags().String("origin", "", "Filter tasks by origin identifier")
