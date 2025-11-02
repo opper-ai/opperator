@@ -552,6 +552,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, adapter Adapter, calls []
 				SessionID: asyncSession,
 				CallID:    asyncCallID,
 				ToolName:  registrationName,
+				Daemon:    strings.TrimSpace(asyncMeta.Daemon),
 			})
 			continue
 		}
@@ -663,6 +664,7 @@ type asyncMetadata struct {
 	Tool      string `json:"tool"`
 	SessionID string `json:"session_id"`
 	CallID    string `json:"call_id"`
+	Daemon    string `json:"daemon"`
 }
 
 func parseAsyncMetadata(raw string) (asyncMetadata, bool) {

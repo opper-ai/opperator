@@ -52,7 +52,14 @@ func RunStartAgent(ctx context.Context, arguments string) (string, string) {
 		return "error: missing name", ""
 	}
 
-	respb, err := ipcRequestCtx(ctx, struct {
+	// Find which daemon has this agent
+	daemonName, err := FindAgentDaemon(ctx, params.Name)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), ""
+	}
+
+	// Send start request to the appropriate daemon
+	respb, err := ipcRequestToDaemon(ctx, daemonName, struct {
 		Type      string `json:"type"`
 		AgentName string `json:"agent_name"`
 	}{Type: "start", AgentName: params.Name})
@@ -75,5 +82,11 @@ func RunStartAgent(ctx context.Context, arguments string) (string, string) {
 
 	meta := StartAgentMetadata{Name: params.Name, Action: "start", At: time.Now().Format(time.RFC3339)}
 	mb, _ := json.Marshal(meta)
-	return fmt.Sprintf("Started agent %q", params.Name), string(mb)
+
+	// Include daemon info in response
+	daemonSuffix := ""
+	if daemonName != "local" {
+		daemonSuffix = fmt.Sprintf(" on daemon %q", daemonName)
+	}
+	return fmt.Sprintf("Started agent %q%s", params.Name, daemonSuffix), string(mb)
 }

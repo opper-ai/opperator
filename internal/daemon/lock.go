@@ -7,7 +7,7 @@ import (
 	"os"
 	"syscall"
 
-	"opperator/internal/config"
+	"opperator/config"
 )
 
 // ErrAlreadyRunning is returned when another daemon instance already holds the lock.

@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"opperator/internal/config"
+	"opperator/config"
 	"opperator/internal/ipc"
 )
 

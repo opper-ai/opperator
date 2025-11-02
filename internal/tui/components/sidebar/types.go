@@ -20,6 +20,7 @@ type AgentListItem struct {
 	Description string
 	Status      string
 	Color       string
+	Daemon      string // Which daemon this agent is on
 }
 
 // CustomSection represents a custom sidebar section

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"opperator/internal/config"
+	"opperator/config"
 )
 
 var errEmptySecretName = errors.New("secret name cannot be empty")

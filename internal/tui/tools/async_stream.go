@@ -67,12 +67,19 @@ type wireToolProgress struct {
 const requestWatchToolTask = "tool_watch"
 
 func WatchAsyncTask(ctx context.Context, taskID string) (<-chan AsyncTaskEvent, func(), error) {
+	return WatchAsyncTaskOnDaemon(ctx, taskID, "local")
+}
+
+func WatchAsyncTaskOnDaemon(ctx context.Context, taskID, daemonName string) (<-chan AsyncTaskEvent, func(), error) {
 	trimmed := strings.TrimSpace(taskID)
 	if trimmed == "" {
 		return nil, nil, fmt.Errorf("task id is required")
 	}
+	if daemonName == "" {
+		daemonName = "local"
+	}
 	payload := map[string]any{"type": requestWatchToolTask, "task_id": trimmed}
-	conn, cleanup, err := openStream(ctx, payload)
+	conn, cleanup, err := openStreamToDaemon(ctx, daemonName, payload)
 	if err != nil {
 		return nil, nil, err
 	}

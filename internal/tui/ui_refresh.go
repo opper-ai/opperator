@@ -160,7 +160,7 @@ func (m *Model) refreshSidebar() tea.Cmd {
 			// so we pass nil for commands
 			_, _ = m.sidebar.SetAgentInfo(coreName, description, coreColor, nil)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			if agents, err := llm.ListAgents(ctx); err == nil && len(agents) > 0 {
 				agentList := make([]cmpsidebar.AgentListItem, 0, len(agents))
@@ -170,6 +170,7 @@ func (m *Model) refreshSidebar() tea.Cmd {
 						Description: agent.Description,
 						Status:      agent.Status,
 						Color:       agent.Color,
+						Daemon:      agent.Daemon,
 					})
 				}
 				m.sidebar.SetAgentList(agentList)
@@ -603,7 +604,7 @@ func (m *Model) refreshAgentListInSidebar() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	agents, err := llm.ListAgents(ctx)
@@ -625,6 +626,7 @@ func (m *Model) refreshAgentListInSidebar() {
 			Description: agent.Description,
 			Status:      status,
 			Color:       agent.Color,
+			Daemon:      agent.Daemon,
 		})
 	}
 

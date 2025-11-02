@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
+	"opperator/config"
 	cmpsidebar "tui/components/sidebar"
 	"tui/coreagent"
 	"tui/internal/protocol"
@@ -30,117 +31,133 @@ type agentStateEventMsg struct {
 	CustomSections []cmpsidebar.CustomSection
 	Status         string
 	Commands       []protocol.CommandDescriptor
+	Daemon         string // NEW: Which daemon this event came from
 }
 
-// initAgentStateWatcher initializes the agent state watcher with a persistent channel
+// initAgentStateWatcher initializes the multi-daemon agent state watcher
 func (m *Model) initAgentStateWatcher() {
 	if m.agentStateCh != nil {
 		// Already initialized
 		return
 	}
 
-	// Unbuffered channel ensures strict FIFO ordering of events
-	eventCh := make(chan agentStateEventMsg)
+	// Shared event channel for all daemons
+	eventCh := make(chan agentStateEventMsg, 100) // Buffered to handle multiple daemons
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m.agentStateCh = eventCh
 	m.agentStateCancel = cancel
 
-	// Start background goroutine to read from daemon
-	go func() {
-		defer close(eventCh)
-		defer cancel()
+	// Load daemon registry
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		// Fallback to local daemon only
+		go m.watchSingleDaemon(ctx, "local", eventCh)
+		return
+	}
 
-		payload := struct {
-			Type string `json:"type"`
-		}{Type: "watch_agent_state"}
-
-		conn, cleanup, err := tools.OpenStream(ctx, payload)
-		if err != nil {
-			return
+	// Start watcher goroutine for each enabled daemon
+	for _, daemon := range registry.Daemons {
+		if !daemon.Enabled {
+			continue
 		}
-		defer cleanup()
+		go m.watchSingleDaemon(ctx, daemon.Name, eventCh)
+	}
+}
 
-		// Read initial success response
-		scanner := bufio.NewScanner(conn)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 64*1024*1024)
+// watchSingleDaemon watches agent state events from a single daemon
+func (m *Model) watchSingleDaemon(ctx context.Context, daemonName string, eventCh chan<- agentStateEventMsg) {
+	payload := struct {
+		Type string `json:"type"`
+	}{Type: "watch_agent_state"}
 
-		if !scanner.Scan() {
-			return
+	conn, cleanup, err := tools.OpenStreamToDaemon(ctx, daemonName, payload)
+	if err != nil {
+		// Silently fail - daemon may be offline
+		return
+	}
+	defer cleanup()
+
+	// Read initial success response
+	scanner := bufio.NewScanner(conn)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 64*1024*1024)
+
+	if !scanner.Scan() {
+		return
+	}
+
+	var resp struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil || !resp.Success {
+		return
+	}
+
+	// Read events and send to shared channel
+	for scanner.Scan() {
+		var event struct {
+			Type           string                       `json:"type"`
+			AgentName      string                       `json:"agent_name"`
+			Description    string                       `json:"description,omitempty"`
+			SystemPrompt   string                       `json:"system_prompt,omitempty"`
+			Color          string                       `json:"color,omitempty"`
+			Logs           []string                     `json:"logs,omitempty"`
+			LogEntry       string                       `json:"log_entry,omitempty"`
+			CustomSections interface{}                  `json:"custom_sections,omitempty"`
+			Status         string                       `json:"status,omitempty"`
+			Commands       []protocol.CommandDescriptor `json:"commands,omitempty"`
 		}
 
-		var resp struct {
-			Success bool   `json:"success"`
-			Error   string `json:"error"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil || !resp.Success {
-			return
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
 		}
 
-		// Read events and send to channel
-		for scanner.Scan() {
-			var event struct {
-				Type           string                       `json:"type"`
-				AgentName      string                       `json:"agent_name"`
-				Description    string                       `json:"description,omitempty"`
-				SystemPrompt   string                       `json:"system_prompt,omitempty"`
-				Color          string                       `json:"color,omitempty"`
-				Logs           []string                     `json:"logs,omitempty"`
-				LogEntry       string                       `json:"log_entry,omitempty"`
-				CustomSections interface{}                  `json:"custom_sections,omitempty"`
-				Status         string                       `json:"status,omitempty"`
-				Commands       []protocol.CommandDescriptor `json:"commands,omitempty"`
-			}
-
-			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-				continue
-			}
-
-			// Convert custom sections
-			var sections []cmpsidebar.CustomSection
-			if event.CustomSections != nil {
-				if sectionsData, ok := event.CustomSections.([]interface{}); ok {
-					for _, s := range sectionsData {
-						if sMap, ok := s.(map[string]interface{}); ok {
-							section := cmpsidebar.CustomSection{}
-							if id, ok := sMap["id"].(string); ok {
-								section.ID = strings.TrimSpace(id)
-							}
-							if title, ok := sMap["title"].(string); ok {
-								section.Title = strings.TrimSpace(title)
-							}
-							if content, ok := sMap["content"].(string); ok {
-								// Trim leading/trailing whitespace to prevent alignment issues
-								section.Content = strings.TrimSpace(content)
-							}
-							if collapsed, ok := sMap["collapsed"].(bool); ok {
-								section.Collapsed = collapsed
-							}
-							sections = append(sections, section)
+		// Convert custom sections
+		var sections []cmpsidebar.CustomSection
+		if event.CustomSections != nil {
+			if sectionsData, ok := event.CustomSections.([]interface{}); ok {
+				for _, s := range sectionsData {
+					if sMap, ok := s.(map[string]interface{}); ok {
+						section := cmpsidebar.CustomSection{}
+						if id, ok := sMap["id"].(string); ok {
+							section.ID = strings.TrimSpace(id)
 						}
+						if title, ok := sMap["title"].(string); ok {
+							section.Title = strings.TrimSpace(title)
+						}
+						if content, ok := sMap["content"].(string); ok {
+							// Trim leading/trailing whitespace to prevent alignment issues
+							section.Content = strings.TrimSpace(content)
+						}
+						if collapsed, ok := sMap["collapsed"].(bool); ok {
+							section.Collapsed = collapsed
+						}
+						sections = append(sections, section)
 					}
 				}
 			}
-
-			select {
-			case eventCh <- agentStateEventMsg{
-				AgentName:      event.AgentName,
-				Type:           event.Type,
-				Description:    event.Description,
-				SystemPrompt:   event.SystemPrompt,
-				Color:          event.Color,
-				Logs:           event.Logs,
-				LogEntry:       event.LogEntry,
-				CustomSections: sections,
-				Status:         event.Status,
-				Commands:       protocol.NormalizeCommandDescriptors(event.Commands),
-			}:
-			case <-ctx.Done():
-				return
-			}
 		}
-	}()
+
+		select {
+		case eventCh <- agentStateEventMsg{
+			AgentName:      event.AgentName,
+			Type:           event.Type,
+			Description:    event.Description,
+			SystemPrompt:   event.SystemPrompt,
+			Color:          event.Color,
+			Logs:           event.Logs,
+			LogEntry:       event.LogEntry,
+			CustomSections: sections,
+			Status:         event.Status,
+			Commands:       protocol.NormalizeCommandDescriptors(event.Commands),
+			Daemon:         daemonName, // Tag event with daemon name
+		}:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // handleFocusAgentEvent handles when the focused agent changes

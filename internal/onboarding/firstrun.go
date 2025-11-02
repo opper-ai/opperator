@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
-	"opperator/internal/config"
+	"opperator/config"
 )
 
 // IsFirstRun checks if this is the first time the app is being run

@@ -23,7 +23,7 @@ import (
 	"github.com/lucasb-eyer/go-colorful"
 	"github.com/muesli/termenv"
 	"gopkg.in/yaml.v3"
-	"opperator/internal/config"
+	"opperator/config"
 	"opperator/internal/credentials"
 	"opperator/internal/daemon"
 	"tui/components/anim"

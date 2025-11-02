@@ -27,6 +27,7 @@ type agentPickerOption struct {
 	name   string
 	label  string
 	status string
+	daemon string // Which daemon this agent is on
 }
 
 type agentPickerItem struct {
@@ -73,6 +74,7 @@ func newFocusAgentPicker(agents []llm.AgentInfo, maxWidth int, focusedAgent stri
 			name:   trimmed,
 			label:  trimmed,
 			status: strings.ToLower(strings.TrimSpace(agent.Status)),
+			daemon: strings.TrimSpace(agent.Daemon),
 		})
 	}
 
@@ -125,6 +127,7 @@ func newAgentPicker(agents []llm.AgentInfo, builtins []coreagent.Definition, max
 			name:   trimmed,
 			label:  trimmed,
 			status: strings.ToLower(strings.TrimSpace(agent.Status)),
+			daemon: strings.TrimSpace(agent.Daemon),
 		})
 	}
 
@@ -298,6 +301,17 @@ func (p *agentPicker) View() string {
 		padding := maxNameWidth - nameWidth
 		if padding > 0 {
 			rendered += strings.Repeat(" ", padding)
+		}
+
+		// Add daemon tag if present (for remote agents)
+		if daemon := strings.TrimSpace(item.option.daemon); daemon != "" && daemon != "local" {
+			var daemonStyle lipgloss.Style
+			if i == p.index {
+				daemonStyle = theme.S().SelectedBase.Foreground(theme.FgSubtle)
+			} else {
+				daemonStyle = lipgloss.NewStyle().Foreground(theme.FgSubtle)
+			}
+			rendered += daemonStyle.Render("  [" + daemon + "]")
 		}
 
 		if desc := strings.TrimSpace(item.option.status); desc != "" && item.option.name != "" {

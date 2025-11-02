@@ -16,6 +16,7 @@ type asyncTaskRegistration struct {
 	SessionID string
 	CallID    string
 	ToolName  string
+	Daemon    string // Which daemon this task is running on
 }
 
 type asyncTracker struct {
@@ -76,6 +77,7 @@ func (a *asyncTracker) Restore(tasks []tooling.AsyncTask) {
 				SessionID: task.SessionID,
 				CallID:    task.CallID,
 				ToolName:  task.ToolName,
+				Daemon:    task.Daemon,
 			}, seen: len(task.Progress)}
 			a.watching[task.ID] = state
 			go a.monitor(state)
@@ -103,7 +105,12 @@ func (a *asyncTracker) stream(state *watchState) bool {
 		return false
 	}
 	reg := state.registration
-	events, cancel, err := tooling.WatchAsyncTask(context.Background(), reg.TaskID)
+	// Watch the task on the correct daemon
+	daemonName := reg.Daemon
+	if daemonName == "" {
+		daemonName = "local"
+	}
+	events, cancel, err := tooling.WatchAsyncTaskOnDaemon(context.Background(), reg.TaskID, daemonName)
 	if err != nil {
 		if cancel != nil {
 			cancel()
@@ -210,7 +217,12 @@ func (a *asyncTracker) poll(state *watchState) {
 			return
 		}
 		reg := state.registration
-		task, err := tooling.FetchAsyncTask(context.Background(), reg.TaskID)
+		// Fetch task from the correct daemon
+		daemonName := reg.Daemon
+		if daemonName == "" {
+			daemonName = "local"
+		}
+		task, err := tooling.FetchAsyncTaskFromDaemon(context.Background(), reg.TaskID, daemonName)
 		if err != nil {
 			errMsg := strings.TrimSpace(err.Error())
 			if errMsg != "" && strings.Contains(strings.ToLower(errMsg), "not found") {

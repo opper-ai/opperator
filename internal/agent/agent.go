@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"opperator/internal/config"
+	"opperator/config"
 	"opperator/internal/protocol"
 	"tui/components/sidebar"
 )

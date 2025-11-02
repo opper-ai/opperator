@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"opperator/config"
 	toolregistry "tui/tools/registry"
 )
 
@@ -41,6 +42,7 @@ type AsyncTask struct {
 	CommandName string
 	CommandArgs string
 	Progress    []AsyncTaskProgress
+	Daemon      string // Which daemon this task is running on
 }
 
 type rawAsyncTask struct {
@@ -142,7 +144,19 @@ func RunAsyncTool(ctx context.Context, arguments string, workingDir string, sess
 		payload["client_id"] = clientID
 	}
 
-	respBytes, err := IPCRequestCtx(ctx, payload)
+	// Find which daemon has the agent (if agent-based async task)
+	daemonName := "local" // Default for non-agent tasks
+	if agentName := strings.TrimSpace(params.Agent); agentName != "" {
+		// This is an agent command, find the right daemon
+		foundDaemon, err := FindAgentDaemon(ctx, agentName)
+		if err != nil {
+			return fmt.Sprintf("error finding daemon for agent %s: %v", agentName, err), ""
+		}
+		daemonName = foundDaemon
+	}
+
+	// Submit async task to the correct daemon
+	respBytes, err := IPCRequestToDaemon(ctx, daemonName, payload)
 	if err != nil {
 		return fmt.Sprintf("error submitting async task: %v", err), ""
 	}
@@ -171,6 +185,9 @@ func RunAsyncTool(ctx context.Context, arguments string, workingDir string, sess
 		return fmt.Sprintf("error decoding async task payload: %v", err), ""
 	}
 
+	// Store daemon name in the task
+	task.Daemon = daemonName
+
 	metaPayload := map[string]any{
 		"async_task": map[string]any{
 			"id":         task.ID,
@@ -178,6 +195,7 @@ func RunAsyncTool(ctx context.Context, arguments string, workingDir string, sess
 			"tool":       task.ToolName,
 			"session_id": task.SessionID,
 			"call_id":    task.CallID,
+			"daemon":     daemonName, // Track which daemon the task is on
 		},
 	}
 
@@ -213,7 +231,38 @@ func RunAsyncTool(ctx context.Context, arguments string, workingDir string, sess
 	return content, string(metaBytes)
 }
 
+// FetchAsyncTask retrieves an async task by ID, searching all enabled daemons
 func FetchAsyncTask(ctx context.Context, taskID string) (*AsyncTask, error) {
+	id := strings.TrimSpace(taskID)
+	if id == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		// Fallback to local daemon only if registry fails
+		return FetchAsyncTaskFromDaemon(ctx, taskID, "local")
+	}
+
+	// Search all enabled daemons for the task
+	for _, daemon := range registry.Daemons {
+		if !daemon.Enabled {
+			continue
+		}
+
+		task, err := FetchAsyncTaskFromDaemon(ctx, taskID, daemon.Name)
+		if err == nil && task != nil {
+			// Found it, tag with daemon name
+			task.Daemon = daemon.Name
+			return task, nil
+		}
+	}
+
+	return nil, fmt.Errorf("task not found on any daemon")
+}
+
+// FetchAsyncTaskFromDaemon retrieves an async task from a specific daemon
+func FetchAsyncTaskFromDaemon(ctx context.Context, taskID string, daemonName string) (*AsyncTask, error) {
 	id := strings.TrimSpace(taskID)
 	if id == "" {
 		return nil, fmt.Errorf("task id is required")
@@ -222,7 +271,7 @@ func FetchAsyncTask(ctx context.Context, taskID string) (*AsyncTask, error) {
 		"type":    requestGetToolTask,
 		"task_id": id,
 	}
-	respBytes, err := IPCRequestCtx(ctx, payload)
+	respBytes, err := IPCRequestToDaemon(ctx, daemonName, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +301,40 @@ func FetchAsyncTask(ctx context.Context, taskID string) (*AsyncTask, error) {
 }
 
 func ListAsyncTasks(ctx context.Context) ([]AsyncTask, error) {
-	respBytes, err := IPCRequestCtx(ctx, map[string]any{"type": requestListToolTasks})
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		// Fallback to local daemon only if registry fails
+		return listAsyncTasksFromDaemon(ctx, "local")
+	}
+
+	var allTasks []AsyncTask
+
+	// Collect tasks from all enabled daemons
+	for _, daemon := range registry.Daemons {
+		if !daemon.Enabled {
+			continue
+		}
+
+		// Get tasks from this daemon
+		tasks, err := listAsyncTasksFromDaemon(ctx, daemon.Name)
+		if err != nil {
+			// Skip daemon if unreachable, continue with others
+			continue
+		}
+
+		// Tag each task with its daemon and add to collection
+		for i := range tasks {
+			tasks[i].Daemon = daemon.Name
+		}
+		allTasks = append(allTasks, tasks...)
+	}
+
+	return allTasks, nil
+}
+
+// listAsyncTasksFromDaemon retrieves async tasks from a specific daemon
+func listAsyncTasksFromDaemon(ctx context.Context, daemonName string) ([]AsyncTask, error) {
+	respBytes, err := IPCRequestToDaemon(ctx, daemonName, map[string]any{"type": requestListToolTasks})
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +398,30 @@ func DeleteAsyncTasksByCall(ctx context.Context, callID string) error {
 }
 
 func deleteAsyncTasks(ctx context.Context, payload map[string]any) error {
-	respBytes, err := IPCRequestCtx(ctx, payload)
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		// Fallback to local daemon only if registry fails
+		return deleteAsyncTasksFromDaemon(ctx, payload, "local")
+	}
+
+	// Delete from all enabled daemons (tasks may be on multiple daemons)
+	var lastErr error
+	for _, daemon := range registry.Daemons {
+		if !daemon.Enabled {
+			continue
+		}
+
+		// Attempt delete from this daemon, continue even if one fails
+		if err := deleteAsyncTasksFromDaemon(ctx, payload, daemon.Name); err != nil {
+			lastErr = err
+		}
+	}
+
+	return lastErr
+}
+
+func deleteAsyncTasksFromDaemon(ctx context.Context, payload map[string]any, daemonName string) error {
+	respBytes, err := IPCRequestToDaemon(ctx, daemonName, payload)
 	if err != nil {
 		return err
 	}

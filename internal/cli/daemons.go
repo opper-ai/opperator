@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"opperator/internal/config"
+	"opperator/config"
 	"opperator/internal/ipc"
 )
 

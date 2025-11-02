@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"opperator/internal/config"
+	"opperator/config"
 )
 
 // IsRunning reports whether a daemon is listening on the configured socket.

@@ -330,6 +330,12 @@ func RunAgentCommand(ctx context.Context, toolName, arguments, workingDir string
 		return "error: unknown agent command tool", ""
 	}
 
+	// Find which daemon has this agent
+	daemonName, err := FindAgentDaemon(ctx, agentName)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), ""
+	}
+
 	payload := struct {
 		Type       string         `json:"type"`
 		AgentName  string         `json:"agent_name"`
@@ -343,7 +349,8 @@ func RunAgentCommand(ctx context.Context, toolName, arguments, workingDir string
 		Args:       argsData,
 		WorkingDir: workingDir,
 	}
-	respb, err := IPCRequestCtx(ctx, payload)
+	// Send command to the correct daemon
+	respb, err := IPCRequestToDaemon(ctx, daemonName, payload)
 	if err != nil {
 		return fmt.Sprintf("error: %v", err), ""
 	}

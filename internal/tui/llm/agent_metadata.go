@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"opperator/config"
 	"tui/components/sidebar"
 	"tui/internal/protocol"
 
@@ -27,15 +28,56 @@ type AgentInfo struct {
 	SystemPrompt string
 	Status       string
 	Color        string
+	Daemon       string // Which daemon this agent is running on
 }
 
-// current status where available.
+// ListAgents retrieves agents from all enabled daemons in the registry.
 func ListAgents(ctx context.Context) ([]AgentInfo, error) {
+	// Load daemon registry
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		// Fallback to local daemon only if registry fails
+		return listAgentsFromDaemon(ctx, "local")
+	}
+
+	var allAgents []AgentInfo
+
+	// Collect agents from all enabled daemons
+	for _, daemon := range registry.Daemons {
+		if !daemon.Enabled {
+			continue
+		}
+
+		// Get agents from this daemon
+		agents, err := listAgentsFromDaemonConfig(ctx, daemon.Name)
+		if err != nil {
+			// Log error but continue with other daemons
+			// This allows the TUI to work even if some daemons are offline
+			continue
+		}
+
+		// Tag each agent with its daemon and add to collection
+		for i := range agents {
+			agents[i].Daemon = daemon.Name
+		}
+		allAgents = append(allAgents, agents...)
+	}
+
+	return allAgents, nil
+}
+
+// listAgentsFromDaemon retrieves agents from a specific daemon by name
+func listAgentsFromDaemon(ctx context.Context, daemonName string) ([]AgentInfo, error) {
+	return listAgentsFromDaemonConfig(ctx, daemonName)
+}
+
+// listAgentsFromDaemonConfig is the internal implementation for listing agents
+func listAgentsFromDaemonConfig(ctx context.Context, daemonName string) ([]AgentInfo, error) {
 	listPayload := struct {
 		Type string `json:"type"`
 	}{Type: "list"}
 
-	data, err := tooling.IPCRequestCtx(ctx, listPayload)
+	data, err := tooling.IPCRequestToDaemon(ctx, daemonName, listPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +111,7 @@ func ListAgents(ctx context.Context) ([]AgentInfo, error) {
 			SystemPrompt: proc.SystemPrompt,
 			Status:       proc.Status,
 			Color:        proc.Color,
+			// Daemon field will be set by caller
 		})
 	}
 	return agents, nil
@@ -82,6 +125,7 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 	}
 
 	var result AgentMetadata
+	var agentDaemon string // Track which daemon has this agent
 	agents, err := ListAgents(ctx)
 	if err != nil {
 		return AgentMetadata{}, err
@@ -92,11 +136,17 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 			result.Description = proc.Description
 			result.SystemPrompt = proc.SystemPrompt
 			result.Color = proc.Color
+			agentDaemon = proc.Daemon // Remember which daemon has this agent
 			break
 		}
 	}
 	if result.Name == "" {
 		return AgentMetadata{}, fmt.Errorf("agent %s not found", trimmed)
+	}
+
+	// Default to local if daemon not specified (backward compatibility)
+	if agentDaemon == "" {
+		agentDaemon = "local"
 	}
 
 	// Try to fetch commands, but don't fail if agent is stopped/crashed
@@ -106,7 +156,8 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 		AgentName string `json:"agent_name"`
 	}{Type: "list_commands", AgentName: result.Name}
 
-	cmdData, err := tooling.IPCRequestCtx(ctx, cmdPayload)
+	// Query the correct daemon for commands
+	cmdData, err := tooling.IPCRequestToDaemon(ctx, agentDaemon, cmdPayload)
 	if err != nil {
 		// Agent might be stopped - return metadata without commands
 		return result, nil
@@ -141,12 +192,27 @@ func FetchAgentLogs(ctx context.Context, name string, maxLines int) ([]string, e
 		maxLines = 50 // Default to 50 lines
 	}
 
+	// Find which daemon has this agent
+	agentDaemon := "local" // Default
+	agents, err := ListAgents(ctx)
+	if err == nil {
+		for _, agent := range agents {
+			if strings.EqualFold(agent.Name, trimmed) {
+				if agent.Daemon != "" {
+					agentDaemon = agent.Daemon
+				}
+				break
+			}
+		}
+	}
+
 	payload := struct {
 		Type      string `json:"type"`
 		AgentName string `json:"agent_name"`
 	}{Type: "get_logs", AgentName: trimmed}
 
-	data, err := tooling.IPCRequestCtx(ctx, payload)
+	// Query the correct daemon for logs
+	data, err := tooling.IPCRequestToDaemon(ctx, agentDaemon, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -181,12 +247,27 @@ func FetchAgentCustomSections(ctx context.Context, name string) ([]sidebar.Custo
 		return nil, nil // No agent, no sections
 	}
 
+	// Find which daemon has this agent
+	agentDaemon := "local" // Default
+	agents, err := ListAgents(ctx)
+	if err == nil {
+		for _, agent := range agents {
+			if strings.EqualFold(agent.Name, trimmed) {
+				if agent.Daemon != "" {
+					agentDaemon = agent.Daemon
+				}
+				break
+			}
+		}
+	}
+
 	payload := struct {
 		Type      string `json:"type"`
 		AgentName string `json:"agent_name"`
 	}{Type: "get_custom_sections", AgentName: trimmed}
 
-	data, err := tooling.IPCRequestCtx(ctx, payload)
+	// Query the correct daemon for custom sections
+	data, err := tooling.IPCRequestToDaemon(ctx, agentDaemon, payload)
 	if err != nil {
 		return nil, nil
 	}

@@ -81,7 +81,8 @@ func agentListEqual(a, b []AgentListItem) bool {
 		if a[i].Name != b[i].Name ||
 			a[i].Description != b[i].Description ||
 			a[i].Status != b[i].Status ||
-			a[i].Color != b[i].Color {
+			a[i].Color != b[i].Color ||
+			a[i].Daemon != b[i].Daemon {
 			return false
 		}
 	}

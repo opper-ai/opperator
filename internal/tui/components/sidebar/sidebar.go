@@ -407,6 +407,12 @@ func (s *Sidebar) renderAgentsSection(state *SidebarRenderState) {
 				agentLine += " " + t.S().Base.Foreground(t.FgSubtle).Render("- "+agent.Description)
 			}
 
+			// Add daemon tag if agent is on a remote daemon
+			if daemon := strings.TrimSpace(agent.Daemon); daemon != "" && daemon != "local" {
+				daemonTag := t.S().Base.Foreground(t.FgSubtle).Render(" [" + daemon + "]")
+				agentLine += daemonTag
+			}
+
 			agentLines = append(agentLines, agentLine)
 		}
 		content = lipgloss.JoinVertical(lipgloss.Left, agentLines...)

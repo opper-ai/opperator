@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"opperator/internal/agent"
-	"opperator/internal/config"
+	"opperator/config"
 	"opperator/internal/credentials"
 	"opperator/internal/ipc"
 	"opperator/internal/protocol"

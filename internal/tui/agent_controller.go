@@ -366,7 +366,14 @@ func (c *agentController) invokeAgentCommand(agentName, commandName string, args
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		data, err := tooling.IPCRequestCtx(ctx, payload)
+		// Find which daemon has this agent
+		daemonName, err := tooling.FindAgentDaemon(ctx, trimmedAgent)
+		if err != nil {
+			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: err}
+		}
+
+		// Send command to the correct daemon
+		data, err := tooling.IPCRequestToDaemon(ctx, daemonName, payload)
 		if err != nil {
 			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: err}
 		}
@@ -1122,7 +1129,14 @@ func invokeAgentCommandWithCallID(ac *agentController, agentName, commandName st
 			defer cancel()
 		}
 
-		data, err := tooling.IPCRequestCtx(ctx, payload)
+		// Find which daemon has this agent
+		daemonName, err := tooling.FindAgentDaemon(ctx, trimmedAgent)
+		if err != nil {
+			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: err, callID: callID}
+		}
+
+		// Send command to the correct daemon
+		data, err := tooling.IPCRequestToDaemon(ctx, daemonName, payload)
 		if err != nil {
 			return agentCommandResultMsg{agent: trimmedAgent, command: trimmedCommand, err: err, callID: callID}
 		}
