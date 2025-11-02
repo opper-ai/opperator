@@ -17,6 +17,11 @@ func AddDaemon(name, address, authToken string, enabled bool) error {
 		return fmt.Errorf("daemon name cannot be empty")
 	}
 
+	// Prevent modifying the local daemon
+	if name == "local" {
+		return fmt.Errorf("cannot modify 'local' daemon - it is automatically managed")
+	}
+
 	if err := config.ValidateAddress(address); err != nil {
 		return err
 	}
@@ -71,24 +76,52 @@ func AddDaemon(name, address, authToken string, enabled bool) error {
 
 // ListDaemons lists all configured daemons
 func ListDaemons() error {
+	return listDaemonsFiltered("")
+}
+
+// ListCloudDaemons lists only cloud-deployed daemons
+func ListCloudDaemons() error {
+	return listDaemonsFiltered("cloud")
+}
+
+func listDaemonsFiltered(filter string) error {
 	registry, err := config.LoadDaemonRegistry()
 	if err != nil {
 		return fmt.Errorf("failed to load daemon registry: %w", err)
 	}
 
-	if len(registry.Daemons) == 0 {
-		fmt.Println("No daemons configured")
-		registryPath, _ := config.GetDaemonRegistryPath()
-		fmt.Printf("\nAdd a daemon with: op daemon add <name> <address>\n")
-		fmt.Printf("Example: op daemon add production tcp://my-server.com:9999\n")
-		fmt.Printf("Config file: %s\n", registryPath)
+	// Filter daemons based on filter type
+	var filteredDaemons []config.DaemonConfig
+	for _, d := range registry.Daemons {
+		if filter == "cloud" {
+			// Only show cloud providers (not local)
+			if d.Provider != "" && d.Provider != "local" {
+				filteredDaemons = append(filteredDaemons, d)
+			}
+		} else {
+			// Show all daemons
+			filteredDaemons = append(filteredDaemons, d)
+		}
+	}
+
+	if len(filteredDaemons) == 0 {
+		if filter == "cloud" {
+			fmt.Println("No cloud deployments found")
+			fmt.Printf("\nDeploy to cloud with: op cloud deploy\n")
+		} else {
+			fmt.Println("No daemons configured")
+			registryPath, _ := config.GetDaemonRegistryPath()
+			fmt.Printf("\nAdd a daemon with: op daemon add <name> <address>\n")
+			fmt.Printf("Example: op daemon add production tcp://my-server.com:9999\n")
+			fmt.Printf("Config file: %s\n", registryPath)
+		}
 		return nil
 	}
 
 	fmt.Printf("%-15s %-10s %-40s %s\n", "NAME", "STATUS", "ADDRESS", "AUTH")
 	fmt.Printf("%-15s %-10s %-40s %s\n", "----", "------", "-------", "----")
 
-	for _, d := range registry.Daemons {
+	for _, d := range filteredDaemons {
 		status := "disabled"
 		if d.Enabled {
 			status = "enabled"
@@ -102,12 +135,17 @@ func ListDaemons() error {
 		fmt.Printf("%-15s %-10s %-40s %s\n", d.Name, status, d.Address, auth)
 	}
 
-	fmt.Printf("\nTotal: %d daemon(s)\n", len(registry.Daemons))
+	fmt.Printf("\nTotal: %d daemon(s)\n", len(filteredDaemons))
 	return nil
 }
 
 // RemoveDaemon removes a daemon from the registry
 func RemoveDaemon(name string, force bool) error {
+	// Prevent removing the local daemon
+	if name == "local" {
+		return fmt.Errorf("cannot remove 'local' daemon - it is automatically managed")
+	}
+
 	registry, err := config.LoadDaemonRegistry()
 	if err != nil {
 		return fmt.Errorf("failed to load daemon registry: %w", err)

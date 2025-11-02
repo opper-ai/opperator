@@ -16,6 +16,7 @@ import (
 	"opperator/internal/cli"
 	"opperator/internal/credentials"
 	"opperator/internal/daemon"
+	"opperator/internal/deployment"
 	"opperator/internal/onboarding"
 	"opperator/updater"
 	"opperator/version"
@@ -277,6 +278,66 @@ var daemonTestCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := cli.TestDaemon(args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var cloudCmd = &cobra.Command{
+	Use:   "cloud",
+	Short: "Manage cloud deployments",
+	Long:  `Deploy and manage Opperator daemons on cloud providers like Hetzner.`,
+}
+
+var cloudDeployCmd = &cobra.Command{
+	Use:   "deploy",
+	Short: "Deploy a daemon to a cloud VPS",
+	Long: `Deploy an Opperator daemon to a new cloud VPS (currently supports Hetzner Cloud).
+
+This will:
+ 1. Create a new VPS server on your cloud provider
+ 2. Install and configure Opperator
+ 3. Register the daemon in your local config
+
+The wizard will guide you through the process.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := deployment.Deploy(); err != nil {
+			if err.Error() == "cancelled" {
+				fmt.Println("\nDeployment cancelled.")
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var cloudDestroyCmd = &cobra.Command{
+	Use:   "destroy [name]",
+	Short: "Destroy a cloud deployment and delete its VPS",
+	Long: `Destroy a cloud-deployed daemon and delete its VPS.
+
+⚠️  WARNING: This will permanently delete the server and all data.
+Billing will stop immediately.
+
+Use --force to skip the confirmation prompt.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		force, _ := cmd.Flags().GetBool("force")
+		if err := deployment.Destroy(args[0], force); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var cloudListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all cloud deployments",
+	Long:  `List all Opperator daemons deployed to cloud providers.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := cli.ListCloudDaemons(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -762,12 +823,20 @@ func init() {
 	daemonCmd.AddCommand(daemonRemoveCmd)
 	daemonCmd.AddCommand(daemonTestCmd)
 
+	// Cloud command
+	cloudCmd.AddCommand(cloudDeployCmd)
+	cloudCmd.AddCommand(cloudDestroyCmd)
+	cloudCmd.AddCommand(cloudListCmd)
+
 	// Daemon add flags
 	daemonAddCmd.Flags().String("token", "", "Authentication token (can use env var: --token=$MY_TOKEN)")
 	daemonAddCmd.Flags().Bool("enabled", true, "Enable the daemon connection")
 
 	// Daemon remove flags
 	daemonRemoveCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+
+	// Cloud destroy flags
+	cloudDestroyCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
 	asyncListCmd.Flags().String("status", "", "Filter tasks by status (pending|complete|failed)")
 	asyncListCmd.Flags().String("origin", "", "Filter tasks by origin identifier")
@@ -794,6 +863,7 @@ func init() {
 	rootCmd.AddCommand(secretCmd)
 	rootCmd.AddCommand(asyncCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(cloudCmd)
 	// Add hidden commands (needed internally but not shown to users)
 	rootCmd.AddCommand(daemonCmd)
 }

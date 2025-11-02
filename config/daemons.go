@@ -15,6 +15,11 @@ type DaemonConfig struct {
 	Address   string `yaml:"address"`
 	AuthToken string `yaml:"auth_token,omitempty"`
 	Enabled   bool   `yaml:"enabled"`
+
+	// Provider-specific metadata
+	Provider       string `yaml:"provider,omitempty"`        // "local", "hetzner", etc.
+	HetznerServerID int64  `yaml:"hetzner_server_id,omitempty"` // Hetzner Cloud server ID
+	SSHKeyName     string `yaml:"ssh_key_name,omitempty"`   // SSH key name for server access
 }
 
 // DaemonRegistry holds all configured daemon connections
