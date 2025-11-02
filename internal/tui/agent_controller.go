@@ -504,15 +504,37 @@ func (c *agentController) handleAgentCommand(target string) tea.Cmd {
 		return c.switchCoreAgent(def.ID)
 	}
 
-	meta, err := llm.FetchAgentMetadata(context.Background(), trimmed)
-	if err != nil {
-		return util.ReportError(fmt.Errorf("fetch agent %s: %w", trimmed, err))
+	// Set optimistic UI state immediately for instant feedback
+	c.setActiveAgentPending(trimmed)
+	c.refreshHeader()
+	c.refreshSidebar()
+
+	// Fetch full metadata asynchronously (non-blocking)
+	return c.fetchAgentMetadataCmd(trimmed)
+}
+
+// fetchAgentMetadataCmd fetches agent metadata asynchronously
+func (c *agentController) fetchAgentMetadataCmd(agentName string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		meta, err := llm.FetchAgentMetadata(ctx, agentName)
+		return agentMetadataFetchedMsg{
+			agentName: agentName,
+			metadata:  meta,
+			err:       err,
+		}
 	}
-	c.applyActiveAgent(meta, true)
-	if len(meta.Commands) == 0 {
-		return util.ReportWarn(fmt.Sprintf("Agent %s exposes no commands.", meta.Name))
-	}
-	return nil
+}
+
+// setActiveAgentPending sets optimistic UI state while metadata is being fetched
+func (c *agentController) setActiveAgentPending(agentName string) {
+	c.activeName = agentName
+	c.activeDescription = "Loading..."
+	c.activePrompt = ""
+	c.activeCommands = nil
+	c.activeColor = ""
 }
 
 func (c *agentController) restoreActiveAgentForSession(sessionID string) []tea.Cmd {

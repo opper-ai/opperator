@@ -776,16 +776,8 @@ func (m *Model) cycleActiveAgent() tea.Cmd {
 			return cycleAgentResultMsg{clearActive: clearActive, coreID: next.value}
 		}
 
-		meta, err := llm.FetchAgentMetadata(context.Background(), next.value)
-		if err != nil {
-			return cycleAgentResultMsg{err: fmt.Errorf("fetch agent %s: %w", next.value, err)}
-		}
-
-		msg := cycleAgentResultMsg{clearActive: clearActive, meta: meta, hasMeta: true}
-		if len(meta.Commands) == 0 {
-			msg.warn = fmt.Sprintf("Agent %s exposes no commands.", meta.Name)
-		}
-		return msg
+		// Return agent name without fetching metadata (will be fetched async)
+		return cycleAgentResultMsg{clearActive: clearActive, meta: llm.AgentMetadata{Name: next.value}, hasMeta: true}
 	}
 }
 
@@ -807,11 +799,17 @@ func (m *Model) handleCycleAgentResult(msg cycleAgentResultMsg) tea.Cmd {
 			}
 		}
 	} else if msg.hasMeta {
-		if cmd := m.applyActiveAgent(msg.meta, true); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		if msg.warn != "" {
-			cmds = append(cmds, util.ReportWarn(msg.warn))
+		// Set optimistic state and fetch metadata async
+		if m.agents != nil {
+			m.agents.setActiveAgentPending(msg.meta.Name)
+			// Trigger refreshes via the controller's refresh functions
+			if m.agents.refreshHeader != nil {
+				m.agents.refreshHeader()
+			}
+			if m.agents.refreshSidebar != nil {
+				m.agents.refreshSidebar()
+			}
+			cmds = append(cmds, m.agents.fetchAgentMetadataCmd(msg.meta.Name))
 		}
 	} else if msg.warn != "" {
 		cmds = append(cmds, util.ReportWarn(msg.warn))

@@ -126,6 +126,10 @@ func (s *Sidebar) SetAgentList(agents []AgentListItem) {
 	}
 }
 
+func (s *Sidebar) HasAgentList() bool {
+	return len(s.agent.List) > 0
+}
+
 func (s *Sidebar) SetFocusedAgent(agentName string) {
 	changed := s.builder.SetFocusedAgent(agentName)
 	if changed {

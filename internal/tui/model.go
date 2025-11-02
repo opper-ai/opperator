@@ -444,9 +444,17 @@ func (m *Model) Init() tea.Cmd {
 
 	// Check for updates in the background
 	cmds = append(cmds, m.checkForUpdatesCmd())
-	if m.sidebar != nil && m.currentCoreAgentID() == coreagent.IDBuilder {
-		if focusedAgent := m.sidebar.FocusedAgentName(); strings.TrimSpace(focusedAgent) != "" {
-			cmds = append(cmds, m.fetchFocusedAgentMetadataCmd(focusedAgent))
+
+	// Fetch initial data based on core agent mode
+	if m.sidebar != nil {
+		coreID := m.currentCoreAgentID()
+		if coreID == coreagent.IDBuilder {
+			if focusedAgent := m.sidebar.FocusedAgentName(); strings.TrimSpace(focusedAgent) != "" {
+				cmds = append(cmds, m.fetchFocusedAgentMetadataCmd(focusedAgent))
+			}
+		} else if coreID == coreagent.IDOpperator {
+			// Fetch agent list on startup for Opperator mode
+			cmds = append(cmds, m.refreshAgentListCmd())
 		}
 	}
 
@@ -573,14 +581,15 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		if v.Type == "status" && v.Status != "" {
 			m.updateAgentStatusAndRefreshStats(v.AgentName, v.Status)
 
-			// Update agent list in Opperator mode sidebar
-			if m.sidebar != nil && coreID == coreagent.IDOpperator {
-				m.refreshAgentListInSidebar()
-			}
-
 			// Track if we need to fetch metadata when agent starts
 			shouldFetchMetadata := false
 			isFocusedAgentInBuilder := false
+			shouldRefreshAgentList := false
+
+			// Update agent list in Opperator mode sidebar (async)
+			if m.sidebar != nil && coreID == coreagent.IDOpperator {
+				shouldRefreshAgentList = true
+			}
 
 			// Update focused agent status in Builder mode
 			if m.sidebar != nil && coreID == coreagent.IDBuilder {
@@ -602,11 +611,17 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 				shouldFetchMetadata = true
 			}
 
+			// Batch async commands if needed
+			var cmds []tea.Cmd
 			if shouldFetchMetadata {
-				return tea.Batch(
-					m.fetchFocusedAgentMetadataCmd(v.AgentName),
-					m.waitAgentStateEvent(),
-				)
+				cmds = append(cmds, m.fetchFocusedAgentMetadataCmd(v.AgentName))
+			}
+			if shouldRefreshAgentList {
+				cmds = append(cmds, m.refreshAgentListCmd())
+			}
+			if len(cmds) > 0 {
+				cmds = append(cmds, m.waitAgentStateEvent())
+				return tea.Batch(cmds...)
 			}
 		}
 
@@ -692,8 +707,8 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 					}
 					// Refresh agent list in Opperator mode to update colors
 					if coreID == coreagent.IDOpperator {
-						m.refreshAgentListInSidebar()
-						return tea.Batch(m.refreshSidebar(), m.waitAgentStateEvent())
+						// Async refresh - removed blocking call
+						return tea.Batch(m.refreshAgentListCmd(), m.refreshSidebar(), m.waitAgentStateEvent())
 					}
 				}
 			}
@@ -729,6 +744,10 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		return m.handleFocusAgentEvent(v)
 	case planEventMsg:
 		return m.handlePlanEvent(v)
+	case agentMetadataFetchedMsg:
+		return m.handleAgentMetadataFetched(v)
+	case agentListRefreshedMsg:
+		return m.handleAgentListRefreshed(v)
 	case focusedAgentMetadataMsg:
 		return m.handleFocusedAgentMetadata(v)
 	case initialAgentLogsMsg:

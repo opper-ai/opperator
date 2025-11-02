@@ -91,6 +91,17 @@ type focusedAgentMetadataMsg struct {
 	err       error
 }
 
+type agentMetadataFetchedMsg struct {
+	agentName string
+	metadata  llm.AgentMetadata
+	err       error
+}
+
+type agentListRefreshedMsg struct {
+	agents []llm.AgentInfo
+	err    error
+}
+
 type initialAgentLogsMsg struct {
 	agentName string
 	logs      []string

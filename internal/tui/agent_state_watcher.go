@@ -17,6 +17,7 @@ import (
 	llm "tui/llm"
 	"tui/tools"
 	tooling "tui/tools"
+	"tui/util"
 )
 
 // agentStateEventMsg wraps an agent state change event
@@ -307,6 +308,36 @@ func (m *Model) handleFocusedAgentMetadata(msg focusedAgentMetadataMsg) tea.Cmd 
 		m.fetchInitialPlanItemsCmd(msg.agentName),
 		m.fetchInitialCustomSectionsCmd(msg.agentName),
 	)
+}
+
+// handleAgentMetadataFetched handles async metadata fetch completion for active agent switching
+func (m *Model) handleAgentMetadataFetched(msg agentMetadataFetchedMsg) tea.Cmd {
+	if m.agents == nil {
+		return nil
+	}
+
+	// Check if we're still trying to switch to this agent
+	currentActive := strings.TrimSpace(m.agents.activeName)
+	if currentActive != msg.agentName {
+		// Active agent changed, ignore stale metadata
+		return nil
+	}
+
+	if msg.err != nil {
+		// Failed to fetch metadata - clear the pending state and show error
+		m.agents.clearActiveAgent()
+		return util.ReportError(fmt.Errorf("fetch agent %s: %w", msg.agentName, msg.err))
+	}
+
+	// Apply the full metadata
+	m.agents.applyActiveAgent(msg.metadata, true)
+
+	// Warn if agent has no commands
+	if len(msg.metadata.Commands) == 0 {
+		return util.ReportWarn(fmt.Sprintf("Agent %s exposes no commands.", msg.metadata.Name))
+	}
+
+	return nil
 }
 
 // fetchInitialAgentLogsCmd fetches initial logs for an agent

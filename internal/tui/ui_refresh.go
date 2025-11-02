@@ -160,25 +160,11 @@ func (m *Model) refreshSidebar() tea.Cmd {
 			// so we pass nil for commands
 			_, _ = m.sidebar.SetAgentInfo(coreName, description, coreColor, nil)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			if agents, err := llm.ListAgents(ctx); err == nil && len(agents) > 0 {
-				agentList := make([]cmpsidebar.AgentListItem, 0, len(agents))
-				for _, agent := range agents {
-					agentList = append(agentList, cmpsidebar.AgentListItem{
-						Name:        agent.Name,
-						Description: agent.Description,
-						Status:      agent.Status,
-						Color:       agent.Color,
-						Daemon:      agent.Daemon,
-					})
-				}
-				m.sidebar.SetAgentList(agentList)
-			} else {
-				m.sidebar.SetAgentList(nil)
-			}
-
 			m.sidebar.SetCustomSections(nil)
+
+			// Don't fetch here - it's handled by Init() and status change events
+			// This prevents redundant fetches on every sidebar refresh
+			return nil
 		} else if coreID == coreagent.IDBuilder {
 			// Show Builder info in sidebar
 			coreName := m.currentCoreAgentName()
@@ -598,23 +584,34 @@ func (m *Model) updateAgentStatusAndRefreshStats(agentName, status string) {
 	}
 }
 
-// refreshAgentListInSidebar updates the agent list in the sidebar with current statuses from m.agentStatuses
-func (m *Model) refreshAgentListInSidebar() {
+// refreshAgentListCmd fetches the agent list asynchronously
+func (m *Model) refreshAgentListCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		agents, err := llm.ListAgents(ctx)
+		return agentListRefreshedMsg{
+			agents: agents,
+			err:    err,
+		}
+	}
+}
+
+// handleAgentListRefreshed handles the async agent list refresh result
+func (m *Model) handleAgentListRefreshed(msg agentListRefreshedMsg) tea.Cmd {
 	if m.sidebar == nil {
-		return
+		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	agents, err := llm.ListAgents(ctx)
-	if err != nil || len(agents) == 0 {
-		return
+	if msg.err != nil {
+		return nil
 	}
 
 	// Build agent list with current statuses from m.agentStatuses map
-	agentList := make([]cmpsidebar.AgentListItem, 0, len(agents))
-	for _, agent := range agents {
+	// Even if the list is empty, we set it to clear any stale data
+	agentList := make([]cmpsidebar.AgentListItem, 0, len(msg.agents))
+	for _, agent := range msg.agents {
 		// Use status from our local map if available, otherwise use status from list
 		status := agent.Status
 		if localStatus, exists := m.agentStatuses[agent.Name]; exists {
@@ -631,4 +628,7 @@ func (m *Model) refreshAgentListInSidebar() {
 	}
 
 	m.sidebar.SetAgentList(agentList)
+
+	// Return nil - Bubbletea will automatically re-render the view
+	return nil
 }
