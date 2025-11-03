@@ -220,6 +220,18 @@ func Deploy() error {
 		return fmt.Errorf("failed to save daemon registry: %w", err)
 	}
 
+	// Step 5: Store SSH key for future updates
+	sshKeySecretName := fmt.Sprintf("HETZNER_SSH_KEY_%s", input.Name)
+	if err := credentials.SetSecret(sshKeySecretName, serverInfo.PrivateKey); err != nil {
+		// Non-fatal - just warn the user
+		fmt.Printf("\nWarning: Failed to store SSH key: %v\n", err)
+		fmt.Printf("You may need to manually update this daemon in the future.\n")
+	} else {
+		if err := credentials.RegisterSecret(sshKeySecretName); err != nil {
+			fmt.Printf("\nWarning: Failed to register SSH key secret: %v\n", err)
+		}
+	}
+
 	// Print success message
 	fg := lipgloss.Color("#dddddd")
 	primary := lipgloss.Color("#f7c0af")

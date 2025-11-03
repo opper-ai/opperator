@@ -128,26 +128,50 @@ func (p *Provisioner) Provision(ctx context.Context, authToken string) error {
 		return fmt.Errorf("set home permissions: %w", err)
 	}
 
-	// Step 2: Build and upload binary
+	// Step 2: Install system dependencies
+	if err := p.installSystemDependencies(); err != nil {
+		return fmt.Errorf("install system dependencies: %w", err)
+	}
+
+	// Step 3: Build and upload binary
 	if err := p.uploadBinary(); err != nil {
 		return fmt.Errorf("upload binary: %w", err)
 	}
 
-	// Step 3: Configure firewall
+	// Step 4: Configure firewall
 	if err := p.configureFirewall(); err != nil {
 		return fmt.Errorf("configure firewall: %w", err)
 	}
 
-	// Step 4: Create systemd service
+	// Step 5: Create systemd service
 	if err := p.createSystemdService(authToken); err != nil {
 		return fmt.Errorf("create systemd service: %w", err)
 	}
 
-	// Step 5: Start daemon
+	// Step 6: Start daemon
 	if err := p.startDaemon(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
+	return nil
+}
+
+// installSystemDependencies installs required system packages
+func (p *Provisioner) installSystemDependencies() error {
+	fmt.Println("Installing system dependencies (python3-venv, python3-pip)...")
+
+	// Update package lists
+	if err := p.runCommand("apt-get update -qq"); err != nil {
+		return fmt.Errorf("update package lists: %w", err)
+	}
+
+	// Install Python and venv support
+	// -y auto-confirms, -qq quiet output
+	if err := p.runCommand("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip"); err != nil {
+		return fmt.Errorf("install python packages: %w", err)
+	}
+
+	fmt.Println("System dependencies installed successfully")
 	return nil
 }
 
