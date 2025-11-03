@@ -344,6 +344,24 @@ var cloudListCmd = &cobra.Command{
 	},
 }
 
+var cloudUpdateCmd = &cobra.Command{
+	Use:   "update [daemon-name]",
+	Short: "Update a cloud daemon with the latest binary",
+	Long: `Update a cloud-deployed daemon by:
+ 1. Building a new Linux binary from your current code
+ 2. Transferring it to the remote server via SSH
+ 3. Gracefully restarting the daemon
+
+This is useful after you've made local changes and want to deploy them to production.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := deployment.Update(args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var asyncCmd = &cobra.Command{
 	Use:   "async",
 	Short: "Inspect daemon async tasks",
@@ -516,7 +534,41 @@ var deleteCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
-		if err := cli.DeleteAgent(args[0], force); err != nil {
+		daemonName, _ := cmd.Flags().GetString("daemon")
+		if err := cli.DeleteAgent(args[0], force, daemonName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var moveCmd = &cobra.Command{
+	Use:   "move [agent-name] --to [daemon-name]",
+	Short: "Move an agent to another daemon",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		toDaemon, _ := cmd.Flags().GetString("to")
+		force, _ := cmd.Flags().GetBool("force")
+		noStart, _ := cmd.Flags().GetBool("no-start")
+
+		if toDaemon == "" {
+			fmt.Fprintf(os.Stderr, "Error: --to flag is required\n")
+			os.Exit(1)
+		}
+
+		if err := cli.MoveAgent(args[0], toDaemon, force, noStart); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var whereCmd = &cobra.Command{
+	Use:   "where [agent-name]",
+	Short: "Find which daemon has an agent",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := cli.WhereIsAgent(args[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -797,12 +849,18 @@ func init() {
 	bootstrapCmd.Flags().StringP("description", "d", "", "Agent description")
 	bootstrapCmd.Flags().Bool("no-start", false, "Skip auto-starting the agent after bootstrap")
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	deleteCmd.Flags().String("daemon", "", "Daemon to delete from (auto-detected if not specified)")
+	moveCmd.Flags().String("to", "", "Target daemon name (required)")
+	moveCmd.Flags().BoolP("force", "f", false, "Overwrite if agent exists on destination")
+	moveCmd.Flags().Bool("no-start", false, "Don't auto-start agent on destination")
 	agentCmd.AddCommand(listCmd)
 	agentCmd.AddCommand(startCmd)
 	agentCmd.AddCommand(stopCmd)
 	agentCmd.AddCommand(restartCmd)
 	agentCmd.AddCommand(bootstrapCmd)
 	agentCmd.AddCommand(deleteCmd)
+	agentCmd.AddCommand(moveCmd)
+	agentCmd.AddCommand(whereCmd)
 	agentCmd.AddCommand(reloadCmd)
 	agentCmd.AddCommand(logsCmd)
 	agentCmd.AddCommand(commandCmd)
@@ -827,6 +885,7 @@ func init() {
 	cloudCmd.AddCommand(cloudDeployCmd)
 	cloudCmd.AddCommand(cloudDestroyCmd)
 	cloudCmd.AddCommand(cloudListCmd)
+	cloudCmd.AddCommand(cloudUpdateCmd)
 
 	// Daemon add flags
 	daemonAddCmd.Flags().String("token", "", "Authentication token (can use env var: --token=$MY_TOKEN)")

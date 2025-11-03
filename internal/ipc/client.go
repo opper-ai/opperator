@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"opperator/config"
+	"opperator/internal/agent"
 	"opperator/internal/protocol"
 )
 
@@ -409,6 +410,46 @@ func (c *Client) DeleteAgent(name string) error {
 	}
 
 	return nil
+}
+
+func (c *Client) ReceiveAgent(pkg *agent.AgentPackage, force, startAfter bool) error {
+	req := Request{
+		Type:         RequestReceiveAgent,
+		AgentPackage: pkg,
+		Force:        force,
+		StartAfter:   startAfter,
+	}
+	resp, err := c.sendRequestWithTimeout(req, 60*time.Second) // Longer timeout for file transfer
+	if err != nil {
+		return err
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("%s", resp.Error)
+	}
+
+	return nil
+}
+
+func (c *Client) PackageAgent(name string) (*agent.AgentPackage, error) {
+	req := Request{
+		Type:      RequestPackageAgent,
+		AgentName: name,
+	}
+	resp, err := c.sendRequestWithTimeout(req, 60*time.Second) // Longer timeout for file transfer
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+
+	if resp.AgentPackage == nil {
+		return nil, fmt.Errorf("no agent package returned")
+	}
+
+	return resp.AgentPackage, nil
 }
 
 // NewClientFromRegistry creates a client using daemon configuration from the registry

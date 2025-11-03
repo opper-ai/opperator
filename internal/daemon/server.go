@@ -715,6 +715,10 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 		return s.bootstrapAgent(req)
 	case ipc.RequestDeleteAgent:
 		return s.deleteAgent(req)
+	case ipc.RequestReceiveAgent:
+		return s.receiveAgent(req)
+	case ipc.RequestPackageAgent:
+		return s.packageAgent(req)
 	default:
 		return ipc.Response{Success: false, Error: "unknown request type"}
 	}
@@ -860,7 +864,28 @@ func (s *Server) deleteAgent(req ipc.Request) ipc.Response {
 	if err != nil {
 		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to get config directory: %v", err)}
 	}
+
+	// Safety check: processRoot must be non-empty and specific
+	if processRoot == "" {
+		return ipc.Response{Success: false, Error: "agent has empty process_root - refusing to delete"}
+	}
+
+	// Clean the path to normalize it
+	cleanedRoot := filepath.Clean(processRoot)
+
+	// Safety check: processRoot must not be a parent directory like "agents", ".", "..", or "./"
+	if cleanedRoot == "agents" || cleanedRoot == "." || cleanedRoot == ".." || processRoot == "./" || processRoot == "../" {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("agent has unsafe process_root '%s' - refusing to delete", processRoot)}
+	}
+
 	agentDir := filepath.Join(configDir, processRoot)
+
+	// Final safety check: agentDir must contain the agent name
+	if !strings.Contains(agentDir, agentName) {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("agent directory '%s' does not contain agent name '%s' - refusing to delete for safety", agentDir, agentName)}
+	}
+
+	log.Printf("Agent directory to delete: %s", agentDir)
 
 	// Step 1: Stop the agent if it's running
 	status := ag.GetStatus()
@@ -889,17 +914,27 @@ func (s *Server) deleteAgent(req ipc.Request) ipc.Response {
 		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to get config file: %v", err)}
 	}
 
-	// Read the current config
-	data, err := os.ReadFile(configFile)
+	// Load config using proper loader
+	agentsConfig, err := agent.LoadConfig(configFile)
 	if err != nil {
-		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to read config: %v", err)}
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to load config: %v", err)}
 	}
 
-	var agentsConfig struct {
-		Agents []agent.AgentConfig `yaml:"agents"`
+	// Verify we have agents before proceeding (safety check)
+	if len(agentsConfig.Agents) == 0 {
+		return ipc.Response{Success: false, Error: "config has no agents - refusing to delete to prevent data loss"}
 	}
-	if err := yaml.Unmarshal(data, &agentsConfig); err != nil {
-		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to parse config: %v", err)}
+
+	// Find the agent to ensure it exists
+	agentFound := false
+	for _, a := range agentsConfig.Agents {
+		if a.Name == agentName {
+			agentFound = true
+			break
+		}
+	}
+	if !agentFound {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("agent '%s' not found in config", agentName)}
 	}
 
 	// Filter out the agent to delete
@@ -911,8 +946,23 @@ func (s *Server) deleteAgent(req ipc.Request) ipc.Response {
 	}
 	agentsConfig.Agents = newAgents
 
+	// Read the raw config to preserve structure
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to read config file: %v", err)}
+	}
+
+	// Parse as generic map to preserve all fields
+	var rawConfig map[string]interface{}
+	if err := yaml.Unmarshal(data, &rawConfig); err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to unmarshal config: %v", err)}
+	}
+
+	// Update only the agents array, preserving other fields
+	rawConfig["agents"] = agentsConfig.Agents
+
 	// Write back the config
-	newData, err := yaml.Marshal(agentsConfig)
+	newData, err := yaml.Marshal(rawConfig)
 	if err != nil {
 		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to marshal config: %v", err)}
 	}
@@ -964,6 +1014,97 @@ func (s *Server) deleteAgent(req ipc.Request) ipc.Response {
 
 	log.Printf("Successfully deleted agent: %s", agentName)
 	return ipc.Response{Success: true}
+}
+
+func (s *Server) receiveAgent(req ipc.Request) ipc.Response {
+	if req.AgentPackage == nil {
+		return ipc.Response{Success: false, Error: "agent package is required"}
+	}
+
+	pkg := req.AgentPackage
+	agentName := pkg.Config.Name
+
+	log.Printf("Receiving agent: %s", agentName)
+
+	// Get config file path
+	configFile, err := config.GetConfigFile()
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to get config file: %v", err)}
+	}
+
+	// Check if agent already exists
+	if _, err := s.manager.GetAgent(agentName); err == nil {
+		if !req.Force {
+			return ipc.Response{Success: false, Error: fmt.Sprintf("agent '%s' already exists (use --force to overwrite)", agentName)}
+		}
+
+		// Overwrite existing agent
+		log.Printf("Overwriting existing agent: %s", agentName)
+
+		// Stop if running
+		if err := s.manager.StopAgent(agentName); err != nil {
+			log.Printf("Warning: failed to stop agent %s: %v", agentName, err)
+		}
+
+		// Use overwrite function
+		if err := agent.OverwriteAgent(pkg, configFile); err != nil {
+			return ipc.Response{Success: false, Error: fmt.Sprintf("failed to overwrite agent: %v", err)}
+		}
+	} else {
+		// Add new agent
+		if err := agent.UnpackageAgent(pkg, configFile); err != nil {
+			return ipc.Response{Success: false, Error: fmt.Sprintf("failed to unpackage agent: %v", err)}
+		}
+	}
+
+	// Reload agent manager to pick up the new agent
+	if err := s.manager.ReloadConfig(); err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to reload config: %v", err)}
+	}
+
+	// Start agent if requested and it was running before
+	if req.StartAfter || pkg.WasRunning {
+		log.Printf("Starting agent: %s", agentName)
+		if err := s.manager.StartAgent(agentName); err != nil {
+			log.Printf("Warning: failed to start agent %s: %v", agentName, err)
+		}
+	}
+
+	log.Printf("Successfully received agent: %s", agentName)
+	return ipc.Response{Success: true}
+}
+
+func (s *Server) packageAgent(req ipc.Request) ipc.Response {
+	agentName := strings.TrimSpace(req.AgentName)
+	if agentName == "" {
+		return ipc.Response{Success: false, Error: "agent name is required"}
+	}
+
+	log.Printf("Packaging agent: %s", agentName)
+
+	// Get agent to check if it exists
+	ag, err := s.manager.GetAgent(agentName)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("agent not found: %v", err)}
+	}
+
+	// Check if agent is running
+	wasRunning := ag.GetStatus() == agent.StatusRunning
+
+	// Get config file path
+	configFile, err := config.GetConfigFile()
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to get config file: %v", err)}
+	}
+
+	// Package the agent
+	pkg, err := agent.PackageAgent(agentName, configFile, wasRunning)
+	if err != nil {
+		return ipc.Response{Success: false, Error: fmt.Sprintf("failed to package agent: %v", err)}
+	}
+
+	log.Printf("Successfully packaged agent: %s", agentName)
+	return ipc.Response{Success: true, AgentPackage: pkg}
 }
 
 // listAgents assembles process info for all agents.

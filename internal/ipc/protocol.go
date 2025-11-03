@@ -36,6 +36,8 @@ const (
 	RequestGetAgentConfig    RequestType = "get_agent_config"
 	RequestBootstrapAgent    RequestType = "bootstrap_agent"
 	RequestDeleteAgent       RequestType = "delete_agent"
+	RequestReceiveAgent      RequestType = "receive_agent"
+	RequestPackageAgent      RequestType = "package_agent"
 )
 
 type Request struct {
@@ -59,6 +61,11 @@ type Request struct {
 	LifecycleData map[string]interface{} `json:"lifecycle_data,omitempty"`
 	Description   string                 `json:"description,omitempty"`
 	NoStart       bool                   `json:"no_start,omitempty"`
+
+	// Agent transfer fields
+	AgentPackage  *agent.AgentPackage    `json:"agent_package,omitempty"`
+	Force         bool                   `json:"force,omitempty"`
+	StartAfter    bool                   `json:"start_after,omitempty"`
 }
 
 type Response struct {
@@ -72,9 +79,10 @@ type Response struct {
 	Tasks       []*ToolTask                  `json:"tasks,omitempty"`
 	Secret      string                       `json:"secret,omitempty"`
 	Secrets     []string                     `json:"secrets,omitempty"`
-	Metrics     *ToolTaskMetrics             `json:"metrics,omitempty"`
-	Sections    interface{}                  `json:"sections,omitempty"`
-	ProcessRoot string                       `json:"process_root,omitempty"`
+	Metrics      *ToolTaskMetrics             `json:"metrics,omitempty"`
+	Sections     interface{}                  `json:"sections,omitempty"`
+	ProcessRoot  string                       `json:"process_root,omitempty"`
+	AgentPackage *agent.AgentPackage          `json:"agent_package,omitempty"`
 }
 
 type ToolTaskMetrics struct {

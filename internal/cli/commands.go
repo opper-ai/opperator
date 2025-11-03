@@ -259,25 +259,27 @@ func BootstrapAgent(name, description string, noStart bool) error {
 	return nil
 }
 
-func DeleteAgent(name string, force bool) error {
-	client, err := ipc.NewClientFromRegistry("local")
-	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+func DeleteAgent(name string, force bool, daemonName string) error {
+	// Find which daemon has the agent
+	if daemonName == "" {
+		foundDaemon, err := findAgentDaemon(name)
+		if err != nil {
+			return err
 		}
-		return err
+		daemonName = foundDaemon
+	}
+
+	// Get client for the daemon
+	client, err := ipc.NewClientFromRegistry(daemonName)
+	if err != nil {
+		return fmt.Errorf("failed to connect to daemon '%s': %w", daemonName, err)
 	}
 	defer client.Close()
 
-	// Get config directory to display what will be deleted
-	configDir, _ := config.GetConfigDir()
-	agentDir := fmt.Sprintf("%s/agents/%s", configDir, name)
-
 	// Show what will be deleted
-	fmt.Printf("This will permanently delete agent '%s' and all its data:\n", name)
+	fmt.Printf("This will permanently delete agent '%s' from daemon '%s' and all its data:\n", name, daemonName)
 	fmt.Println()
 	fmt.Println("  - Agent directory and all files")
-	fmt.Printf("    %s\n", agentDir)
 	fmt.Println("  - Agent configuration entry (agents.yaml)")
 	fmt.Println("  - Agent persistent data (agent_data.json)")
 	fmt.Println("  - Agent logs (database and disk)")
@@ -296,7 +298,7 @@ func DeleteAgent(name string, force bool) error {
 		}
 	}
 
-	fmt.Printf("Deleting agent '%s'...\n", name)
+	fmt.Printf("Deleting agent '%s' from daemon '%s'...\n", name, daemonName)
 	if err := client.DeleteAgent(name); err != nil {
 		return err
 	}
