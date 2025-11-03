@@ -360,6 +360,24 @@ func (c *Client) GetSecret(name string) (string, error) {
 	return resp.Secret, nil
 }
 
+func (c *Client) SetSecret(name, value string) error {
+	req := Request{Type: RequestSetSecret, SecretName: name, SecretValue: value}
+	resp, err := c.sendRequest(req)
+	if err != nil {
+		return err
+	}
+
+	if !resp.Success {
+		errMsg := strings.TrimSpace(resp.Error)
+		if errMsg == "" {
+			errMsg = "failed to set secret"
+		}
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	return nil
+}
+
 func (c *Client) ReloadConfig() error {
 	req := Request{Type: RequestReloadConfig}
 	resp, err := c.sendRequest(req)

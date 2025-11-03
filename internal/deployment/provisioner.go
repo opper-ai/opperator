@@ -6,11 +6,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"opperator/version"
 )
 
 const (
@@ -24,7 +27,7 @@ Type=simple
 User=opperator
 Group=opperator
 WorkingDirectory=/var/lib/opperator
-ExecStart=/opt/opperator/opperator daemon start
+ExecStart=/usr/bin/dbus-run-session -- /opt/opperator/opperator-wrapper.sh
 Restart=on-failure
 RestartSec=5s
 
@@ -136,17 +139,27 @@ func (p *Provisioner) Provision(ctx context.Context, authToken string) error {
 		return fmt.Errorf("upload binary: %w", err)
 	}
 
-	// Step 4: Configure firewall
+	// Step 4: Create wrapper script for keyring support
+	if err := p.createWrapperScript(); err != nil {
+		return fmt.Errorf("create wrapper script: %w", err)
+	}
+
+	// Step 5: Configure firewall
 	if err := p.configureFirewall(); err != nil {
 		return fmt.Errorf("configure firewall: %w", err)
 	}
 
-	// Step 5: Create systemd service
+	// Step 6: Create systemd service
 	if err := p.createSystemdService(authToken); err != nil {
 		return fmt.Errorf("create systemd service: %w", err)
 	}
 
-	// Step 6: Start daemon
+	// Step 7: Initialize keyring
+	if err := p.initializeKeyring(); err != nil {
+		return fmt.Errorf("initialize keyring: %w", err)
+	}
+
+	// Step 8: Start daemon
 	if err := p.startDaemon(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
 	}
@@ -156,27 +169,92 @@ func (p *Provisioner) Provision(ctx context.Context, authToken string) error {
 
 // installSystemDependencies installs required system packages
 func (p *Provisioner) installSystemDependencies() error {
-	fmt.Println("Installing system dependencies (python3-venv, python3-pip)...")
+	fmt.Println("Installing system dependencies (python3-venv, python3-pip, gnome-keyring, dbus-x11, libsecret-tools)...")
 
 	// Update package lists
 	if err := p.runCommand("apt-get update -qq"); err != nil {
 		return fmt.Errorf("update package lists: %w", err)
 	}
 
-	// Install Python and venv support
+	// Install Python, venv support, and keyring dependencies
 	// -y auto-confirms, -qq quiet output
-	if err := p.runCommand("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip"); err != nil {
-		return fmt.Errorf("install python packages: %w", err)
+	if err := p.runCommand("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip gnome-keyring dbus-x11 libsecret-tools"); err != nil {
+		return fmt.Errorf("install packages: %w", err)
 	}
 
 	fmt.Println("System dependencies installed successfully")
 	return nil
 }
 
-// uploadBinary downloads the latest opperator binary from GitHub releases and installs it
+// uploadBinary uploads and installs the opperator binary
+// If running a dev version, builds from local source and uploads via SFTP
+// If running a release version, downloads from GitHub releases on the server
 func (p *Provisioner) uploadBinary() error {
-	// Download directly on the server using the GitHub API to get the latest release
-	// This works with the versioned filenames: opperator-{version}-linux-amd64.tar.gz
+	currentVersion := version.Get()
+
+	// Check if this is a development version
+	if currentVersion == "dev" {
+		fmt.Println("Detected development version, building from local source...")
+		return p.uploadBinaryFromSource()
+	}
+
+	// Production version: download from GitHub releases
+	fmt.Printf("Deploying release version %s from GitHub...\n", currentVersion)
+	return p.uploadBinaryFromGitHub()
+}
+
+// uploadBinaryFromSource builds locally and uploads via SFTP (for dev versions)
+func (p *Provisioner) uploadBinaryFromSource() error {
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	// Build binary for Linux
+	binaryPath := filepath.Join(cwd, "opperator-linux")
+	fmt.Println("Building opperator for Linux amd64...")
+	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/app")
+	cmd.Env = append(os.Environ(),
+		"GOOS=linux",
+		"GOARCH=amd64",
+		"CGO_ENABLED=0",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("build binary: %w\n%s", err, string(output))
+	}
+	defer os.Remove(binaryPath)
+
+	fmt.Println("✓ Binary built successfully")
+
+	// Read binary
+	binaryData, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return fmt.Errorf("read binary: %w", err)
+	}
+
+	// Upload via SFTP
+	fmt.Println("Uploading binary to remote server...")
+	if err := p.uploadFile(binaryData, "/opt/opperator/opperator"); err != nil {
+		return fmt.Errorf("upload file: %w", err)
+	}
+
+	// Set executable permissions
+	if err := p.runCommand("chmod +x /opt/opperator/opperator"); err != nil {
+		return fmt.Errorf("set permissions: %w", err)
+	}
+
+	if err := p.runCommand("chown opperator:opperator /opt/opperator/opperator"); err != nil {
+		return fmt.Errorf("set ownership: %w", err)
+	}
+
+	fmt.Println("✓ Binary uploaded and configured")
+	return nil
+}
+
+// uploadBinaryFromGitHub downloads release from GitHub on the server (for release versions)
+func (p *Provisioner) uploadBinaryFromGitHub() error {
 	downloadCmd := `
 		set -e
 		cd /tmp
@@ -225,6 +303,46 @@ func (p *Provisioner) uploadBinary() error {
 	return nil
 }
 
+// createWrapperScript creates a wrapper script that initializes gnome-keyring before starting opperator
+func (p *Provisioner) createWrapperScript() error {
+	wrapperScript := `#!/bin/bash
+set -e
+
+# Ensure HOME is set (required for keyring)
+export HOME="${HOME:-/var/lib/opperator}"
+
+# Start gnome-keyring-daemon with empty password unlock
+# Use printf to provide TWO newlines (password + confirmation for creating new keyring)
+# This creates an unlocked keyring that agents can use to store/retrieve secrets
+printf "\n\n" | gnome-keyring-daemon --unlock --components=secrets --daemonize 2>/dev/null || {
+    echo "Warning: Failed to start gnome-keyring-daemon, secrets may not work" >&2
+}
+
+# Wait a moment for daemon to be ready
+sleep 0.5
+
+# Start the actual Opperator daemon
+exec /opt/opperator/opperator daemon start
+`
+
+	// Upload wrapper script
+	if err := p.uploadFile([]byte(wrapperScript), "/opt/opperator/opperator-wrapper.sh"); err != nil {
+		return fmt.Errorf("upload wrapper script: %w", err)
+	}
+
+	// Set executable permissions
+	if err := p.runCommand("chmod +x /opt/opperator/opperator-wrapper.sh"); err != nil {
+		return fmt.Errorf("set wrapper permissions: %w", err)
+	}
+
+	// Set ownership
+	if err := p.runCommand("chown opperator:opperator /opt/opperator/opperator-wrapper.sh"); err != nil {
+		return fmt.Errorf("set wrapper ownership: %w", err)
+	}
+
+	return nil
+}
+
 // configureFirewall configures UFW to allow opperator port
 func (p *Provisioner) configureFirewall() error {
 	// Check if UFW is installed
@@ -260,6 +378,37 @@ func (p *Provisioner) createSystemdService(authToken string) error {
 	// Enable service
 	if err := p.runCommand("systemctl enable opperator"); err != nil {
 		return fmt.Errorf("enable service: %w", err)
+	}
+
+	return nil
+}
+
+// initializeKeyring initializes the gnome-keyring for the opperator user
+// This creates the login.keyring file with an empty password for headless automation
+func (p *Provisioner) initializeKeyring() error {
+	initScript := `
+		su - opperator -c '
+			export HOME=/var/lib/opperator
+
+			# Create keyring directories with proper permissions
+			mkdir -p ~/.local/share/keyrings ~/.cache
+			chmod 700 ~/.local/share/keyrings
+
+			# Initialize keyring within a D-Bus session
+			dbus-run-session -- bash -c "
+				# Create keyring with empty password (two newlines: password + confirmation)
+				# This allows the daemon to store/retrieve secrets without password prompts
+				printf \"\\n\\n\" | gnome-keyring-daemon --unlock --components=secrets --daemonize 2>/dev/null
+				sleep 1
+
+				# Store a test secret to verify keyring is working
+				echo -n \"initialized\" | secret-tool store --label=\"opperator-init\" service opperator username init 2>/dev/null || echo \"Warning: test secret storage failed\" >&2
+			"
+		'
+	`
+
+	if err := p.runCommand(initScript); err != nil {
+		return fmt.Errorf("initialize keyring: %w", err)
 	}
 
 	return nil

@@ -93,14 +93,12 @@ func MoveAgent(agentName, toDaemon string, force, noStart bool) error {
 		return fmt.Errorf("agent '%s' not found on any enabled daemon", agentName)
 	}
 
-	fmt.Printf("Moving agent '%s' from '%s' to '%s'...\n", agentName, sourceDaemon.Name, toDaemon)
-
-	// Step 1: Package the agent from source
+	// Step 1: Package the agent from source with wizard
 	var pkg *agent.AgentPackage
 	var wasRunning bool
 
 	if sourceDaemon.Name == "local" {
-		// Package from local
+		// Package from local with wizard
 		localConfig, err := config.GetConfigFile()
 		if err != nil {
 			return fmt.Errorf("failed to get local config: %w", err)
@@ -124,7 +122,8 @@ func MoveAgent(agentName, toDaemon string, force, noStart bool) error {
 			}
 		}
 
-		pkg, err = agent.PackageAgent(agentName, localConfig, wasRunning)
+		// Use wizard to package agent
+		pkg, err = agent.PackageAgentWithWizard(agentName, sourceDaemon.Name, toDaemon, localConfig, wasRunning)
 		if err != nil {
 			return fmt.Errorf("failed to package agent: %w", err)
 		}
@@ -197,6 +196,17 @@ func MoveAgent(agentName, toDaemon string, force, noStart bool) error {
 			return fmt.Errorf("failed to connect to destination daemon: %w", err)
 		}
 		defer destClient.Close()
+
+		// Sync secrets to remote daemon
+		if len(pkg.Secrets) > 0 {
+			fmt.Printf("Syncing %d secret(s) to remote daemon...\n", len(pkg.Secrets))
+			for name, value := range pkg.Secrets {
+				if err := destClient.SetSecret(name, value); err != nil {
+					fmt.Printf("Warning: failed to sync secret '%s': %v\n", name, err)
+				}
+			}
+			fmt.Printf("✓ Secrets synced to '%s'\n", toDaemon)
+		}
 
 		// Send the agent package
 		if err := destClient.ReceiveAgent(pkg, force, !noStart && wasRunning); err != nil {
