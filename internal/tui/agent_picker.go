@@ -822,7 +822,7 @@ func (m *Model) handleCycleAgentResult(msg cycleAgentResultMsg) tea.Cmd {
 	if msg.coreID == coreagent.IDBuilder && m.sidebar != nil {
 		if focusedAgent := m.sidebar.FocusedAgentName(); strings.TrimSpace(focusedAgent) != "" {
 			// Set status from agentStatuses map if available
-			if status, ok := m.agentStatuses[focusedAgent]; ok {
+			if status, ok := m.findAgentStatus(focusedAgent); ok {
 				m.sidebar.SetFocusedAgentStatus(status)
 			}
 			// Fetch metadata (commands, description)

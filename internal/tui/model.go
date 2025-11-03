@@ -114,7 +114,7 @@ type Model struct {
 	asyncTaskWatcher  *AsyncTaskWatcher
 	pendingAsyncTasks map[string]string // map[taskID]callID - tracks async tasks waiting for completion
 
-	agentStatuses map[string]string // map[agentName]status (running, stopped, crashed)
+	agentStatuses map[string]string // map[agentKey]status where agentKey = agentName@daemonName (running, stopped, crashed)
 
 	focusAgentCh     <-chan pubsub.Event[tooling.FocusAgentEvent]
 	focusAgentCancel context.CancelFunc
@@ -124,6 +124,35 @@ type Model struct {
 
 	agentStateCh     <-chan agentStateEventMsg
 	agentStateCancel context.CancelFunc
+}
+
+// agentStatusKey creates a daemon-aware key for the agentStatuses map
+func agentStatusKey(agentName, daemonName string) string {
+	if daemonName == "" {
+		daemonName = "local"
+	}
+	return agentName + "@" + daemonName
+}
+
+// findAgentStatus searches for an agent's status across all daemons
+// Returns the status and true if found, empty string and false otherwise
+func (m *Model) findAgentStatus(agentName string) (string, bool) {
+	if m.agentStatuses == nil || agentName == "" {
+		return "", false
+	}
+
+	// Search through all entries to find a matching agent name
+	// The key format is "agentName@daemonName"
+	for key, status := range m.agentStatuses {
+		// Extract agent name from the key (everything before '@')
+		if idx := strings.Index(key, "@"); idx > 0 {
+			if key[:idx] == agentName {
+				return status, true
+			}
+		}
+	}
+
+	return "", false
 }
 
 func (m *Model) currentCoreAgentID() string {
@@ -554,7 +583,8 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		// Update focused agent status in Builder mode if we have one
 		if m.sidebar != nil && m.currentCoreAgentID() == coreagent.IDBuilder {
 			if focusedAgent := m.sidebar.FocusedAgentName(); focusedAgent != "" {
-				if status, ok := v.statuses[focusedAgent]; ok {
+				// v.statuses now uses daemon-aware keys, so we need to search for the agent
+				if status, ok := m.findAgentStatus(focusedAgent); ok {
 					m.sidebar.SetFocusedAgentStatus(status)
 				}
 			}
@@ -579,7 +609,7 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		coreID := strings.TrimSpace(m.currentCoreAgentID())
 
 		if v.Type == "status" && v.Status != "" {
-			m.updateAgentStatusAndRefreshStats(v.AgentName, v.Status)
+			m.updateAgentStatusAndRefreshStats(v.AgentName, v.Daemon, v.Status)
 
 			// Track if we need to fetch metadata when agent starts
 			shouldFetchMetadata := false

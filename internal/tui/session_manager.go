@@ -401,7 +401,7 @@ func (m *Model) loadConversation(sessionID string) error {
 
 			// Set status from agentStatuses map if available (may not be populated yet during init)
 			if conv.FocusedAgentName != "" {
-				if status, ok := m.agentStatuses[conv.FocusedAgentName]; ok {
+				if status, ok := m.findAgentStatus(conv.FocusedAgentName); ok {
 					m.sidebar.SetFocusedAgentStatus(status)
 				} else {
 					m.sidebar.SetFocusedAgentStatus("")

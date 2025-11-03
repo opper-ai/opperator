@@ -184,7 +184,7 @@ func (m *Model) handleFocusAgentEvent(msg focusAgentEventMsg) tea.Cmd {
 		m.sidebar.SetFocusedAgent(agentName)
 		// Set initial status from the agentStatuses map if available
 		if agentName != "" {
-			if status, ok := m.agentStatuses[agentName]; ok {
+			if status, ok := m.findAgentStatus(agentName); ok {
 				m.sidebar.SetFocusedAgentStatus(status)
 			} else {
 				m.sidebar.SetFocusedAgentStatus("")

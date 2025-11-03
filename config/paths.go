@@ -79,36 +79,7 @@ func EnsureConfigExists() error {
 	}
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		defaultConfig := `agents:
-  - name: "example-server"
-    type: "python"
-    description: "Serve the current directory over HTTP on port 8080"
-    color: "#3ccad7"
-    command: "python3"
-    args: ["-m", "http.server", "8080"]
-    process_root: "./"
-    env:
-      PYTHONUNBUFFERED: "1"
-    auto_restart: false
-
-  - name: "date-logger"
-    type: "shell"
-    description: "Print the current date every 3 seconds"
-    color: "#f97316"
-    command: "sh"
-    args: ["-c", "while true; do date; sleep 3; done"]
-    process_root: "./"
-    auto_restart: false
-
-  - name: "file-watcher"
-    type: "shell"
-    description: "List files in the current directory every 5 seconds"
-    color: "#a855f7"
-    command: "sh"
-    args: ["-c", "ls -la && sleep 5"]
-    process_root: "./"
-    auto_restart: true
-    max_restarts: 3
+		defaultConfig := `agents: []
 `
 
 		if err := os.WriteFile(configFile, []byte(defaultConfig), 0644); err != nil {

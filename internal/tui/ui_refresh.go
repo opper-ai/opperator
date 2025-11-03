@@ -1,13 +1,8 @@
 package tui
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -492,57 +487,27 @@ func (m *Model) shouldSkipMessagesUpdate(msg tea.Msg) bool {
 	}
 }
 
-// initialStatsCmd fetches initial agent statistics from daemon
+// initialStatsCmd fetches initial agent statistics from all enabled daemons
 func (m *Model) initialStatsCmd() tea.Cmd {
 	return func() tea.Msg {
-		// Query daemon for agent list
-		req := struct {
-			Type string `json:"type"`
-		}{Type: "list"}
-		b, _ := json.Marshal(req)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 
-		sock := filepath.Join(os.TempDir(), "opperator.sock")
-		conn, err := net.Dial("unix", sock)
+		// Use ListAgents which queries all enabled daemons
+		agents, err := llm.ListAgents(ctx)
 		if err != nil {
 			return statsCountsMsg{err: err}
 		}
-		defer conn.Close()
 
-		if _, err := conn.Write(append(b, '\n')); err != nil {
-			return statsCountsMsg{err: err}
-		}
-
-		scanner := bufio.NewScanner(conn)
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return statsCountsMsg{err: err}
-			}
-			return statsCountsMsg{err: fmt.Errorf("no response from daemon")}
-		}
-
-		var resp struct {
-			Success   bool   `json:"success"`
-			Error     string `json:"error"`
-			Processes []struct {
-				Name   string `json:"name"`
-				Status string `json:"status"`
-			} `json:"processes"`
-		}
-
-		if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
-			return statsCountsMsg{err: err}
-		}
-
-		if !resp.Success {
-			return statsCountsMsg{err: fmt.Errorf("%s", resp.Error)}
-		}
-
-		// Build statuses map
+		// Build statuses map with daemon-aware keys from all daemons
 		statuses := make(map[string]string)
 		var running, stopped, crashed int
-		for _, p := range resp.Processes {
-			statuses[p.Name] = p.Status
-			switch strings.ToLower(p.Status) {
+
+		for _, agent := range agents {
+			key := agentStatusKey(agent.Name, agent.Daemon)
+			statuses[key] = agent.Status
+
+			switch strings.ToLower(agent.Status) {
 			case "running":
 				running++
 			case "crashed":
@@ -551,18 +516,20 @@ func (m *Model) initialStatsCmd() tea.Cmd {
 				stopped++
 			}
 		}
-		total := len(resp.Processes)
+
+		total := len(agents)
 		return initialStatsMsg{statuses: statuses, running: running, stopped: stopped, crashed: crashed, total: total}
 	}
 }
 
 // updateAgentStatusAndRefreshStats updates local agent status and refreshes stats display
-func (m *Model) updateAgentStatusAndRefreshStats(agentName, status string) {
+func (m *Model) updateAgentStatusAndRefreshStats(agentName, daemonName, status string) {
 	if m.agentStatuses == nil {
 		m.agentStatuses = make(map[string]string)
 	}
 
-	m.agentStatuses[agentName] = status
+	key := agentStatusKey(agentName, daemonName)
+	m.agentStatuses[key] = status
 
 	// Recalculate counts from the map
 	var running, stopped, crashed int
@@ -608,13 +575,31 @@ func (m *Model) handleAgentListRefreshed(msg agentListRefreshedMsg) tea.Cmd {
 		return nil
 	}
 
+	// Build a set of valid agent keys from the fresh list
+	validKeys := make(map[string]bool, len(msg.agents))
+	for _, agent := range msg.agents {
+		key := agentStatusKey(agent.Name, agent.Daemon)
+		validKeys[key] = true
+	}
+
+	// Clean up stale entries from agentStatuses map
+	// Remove any entries that are no longer in the current agent list
+	if m.agentStatuses != nil {
+		for key := range m.agentStatuses {
+			if !validKeys[key] {
+				delete(m.agentStatuses, key)
+			}
+		}
+	}
+
 	// Build agent list with current statuses from m.agentStatuses map
 	// Even if the list is empty, we set it to clear any stale data
 	agentList := make([]cmpsidebar.AgentListItem, 0, len(msg.agents))
 	for _, agent := range msg.agents {
-		// Use status from our local map if available, otherwise use status from list
+		// Use status from our daemon-aware local map if available, otherwise use status from list
 		status := agent.Status
-		if localStatus, exists := m.agentStatuses[agent.Name]; exists {
+		key := agentStatusKey(agent.Name, agent.Daemon)
+		if localStatus, exists := m.agentStatuses[key]; exists {
 			status = localStatus
 		}
 
