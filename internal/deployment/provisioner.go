@@ -6,8 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -175,46 +173,53 @@ func (p *Provisioner) installSystemDependencies() error {
 	return nil
 }
 
-// uploadBinary builds the opperator binary for Linux and uploads it
+// uploadBinary downloads the latest opperator binary from GitHub releases and installs it
 func (p *Provisioner) uploadBinary() error {
-	// Get current working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
+	// Download directly on the server using the GitHub API to get the latest release
+	// This works with the versioned filenames: opperator-{version}-linux-amd64.tar.gz
+	downloadCmd := `
+		set -e
+		cd /tmp
 
-	// Build binary for Linux
-	binaryPath := filepath.Join(cwd, "opperator-linux")
-	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/app")
-	cmd.Env = append(os.Environ(),
-		"GOOS=linux",
-		"GOARCH=amd64",
-		"CGO_ENABLED=0",
-	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("build binary: %w\n%s", err, string(output))
-	}
-	defer os.Remove(binaryPath)
+		# Fetch the latest release tag from GitHub API
+		LATEST_VERSION=$(curl -sL https://api.github.com/repos/opper-ai/opperator/releases/latest | grep '"tag_name"' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
 
-	// Read binary
-	binaryData, err := os.ReadFile(binaryPath)
-	if err != nil {
-		return fmt.Errorf("read binary: %w", err)
-	}
+		if [ -z "$LATEST_VERSION" ]; then
+			echo "Failed to fetch latest version"
+			exit 1
+		fi
 
-	// Upload via SFTP
-	if err := p.uploadFile(binaryData, "/opt/opperator/opperator"); err != nil {
-		return fmt.Errorf("upload file: %w", err)
-	}
+		echo "Downloading opperator version: $LATEST_VERSION"
 
-	// Set executable permissions
-	if err := p.runCommand("chmod +x /opt/opperator/opperator"); err != nil {
-		return fmt.Errorf("set permissions: %w", err)
-	}
+		# Download the versioned Linux amd64 release
+		curl -sL "https://github.com/opper-ai/opperator/releases/download/${LATEST_VERSION}/opperator-${LATEST_VERSION}-linux-amd64.tar.gz" -o opperator.tar.gz
 
-	if err := p.runCommand("chown opperator:opperator /opt/opperator/opperator"); err != nil {
-		return fmt.Errorf("set ownership: %w", err)
+		# Extract the binary (it's named with version, e.g., opperator-v0.1.0-linux-amd64)
+		tar -xzf opperator.tar.gz
+
+		# Find the extracted binary (should be opperator-{version}-linux-amd64)
+		BINARY=$(find . -maxdepth 1 -name "opperator-*-linux-amd64" -type f | head -n1)
+
+		if [ -z "$BINARY" ]; then
+			echo "Failed to find extracted binary"
+			exit 1
+		fi
+
+		# Move to /opt/opperator
+		mv "$BINARY" /opt/opperator/opperator
+
+		# Clean up
+		rm opperator.tar.gz
+
+		# Set executable permissions
+		chmod +x /opt/opperator/opperator
+		chown opperator:opperator /opt/opperator/opperator
+
+		echo "Successfully installed opperator $LATEST_VERSION"
+	`
+
+	if err := p.runCommand(downloadCmd); err != nil {
+		return fmt.Errorf("download and install binary: %w", err)
 	}
 
 	return nil

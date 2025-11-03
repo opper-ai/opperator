@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/huh/spinner"
@@ -37,50 +35,6 @@ func Update(daemonName string) error {
 	}
 
 	fmt.Printf("\n🔄 Updating daemon '%s'\n\n", daemonName)
-
-	// Step 1: Build Linux binary
-	var buildErr error
-	binaryPath := ""
-
-	err = spinner.New().
-		Title("Building opperator for Linux...").
-		Style(spinnerStyle).
-		Action(func() {
-			// Create temp directory for build
-			tmpDir, err := os.MkdirTemp("", "opperator-build-")
-			if err != nil {
-				buildErr = fmt.Errorf("failed to create temp dir: %w", err)
-				return
-			}
-
-			binaryPath = filepath.Join(tmpDir, "opperator")
-
-			// Build for Linux
-			cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/app")
-			cmd.Env = append(os.Environ(),
-				"GOOS=linux",
-				"GOARCH=amd64",
-				"CGO_ENABLED=0",
-			)
-
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				buildErr = fmt.Errorf("build failed: %w\n%s", err, string(output))
-				return
-			}
-		}).
-		Run()
-
-	if err != nil {
-		return err
-	}
-	if buildErr != nil {
-		return buildErr
-	}
-
-	defer os.RemoveAll(filepath.Dir(binaryPath))
-
-	fmt.Println("✓ Binary built for Linux")
 
 	// Step 2: Get server info and SSH credentials
 	var serverIP string
@@ -164,14 +118,14 @@ func Update(daemonName string) error {
 		return fmt.Errorf("updating '%s' provider daemons is not yet supported", daemon.Provider)
 	}
 
-	// Step 3: Transfer binary and restart daemon
+	// Step 3: Download latest release and restart daemon
 	var updateErr error
 
 	err = spinner.New().
-		Title("Uploading new binary and restarting daemon...").
+		Title("Downloading latest release and restarting daemon...").
 		Style(spinnerStyle).
 		Action(func() {
-			// Give it extra time for transfer and restart
+			// Give it extra time for download and restart
 			time.Sleep(2 * time.Second)
 
 			provisioner, err := NewProvisioner(serverIP, sshKey)
@@ -180,13 +134,6 @@ func Update(daemonName string) error {
 				return
 			}
 			defer provisioner.Close()
-
-			// Read the new binary
-			binaryData, err := os.ReadFile(binaryPath)
-			if err != nil {
-				updateErr = fmt.Errorf("failed to read binary: %w", err)
-				return
-			}
 
 			// Stop the daemon
 			if err := provisioner.runCommand("systemctl stop opperator"); err != nil {
@@ -199,15 +146,50 @@ func Update(daemonName string) error {
 				// Non-fatal, continue
 			}
 
-			// Upload new binary
-			if err := provisioner.uploadFile(binaryData, "/opt/opperator/opperator"); err != nil {
-				updateErr = fmt.Errorf("failed to upload binary: %w", err)
-				return
-			}
+			// Download and install latest release from GitHub
+			downloadCmd := `
+				set -e
+				cd /tmp
 
-			// Make it executable
-			if err := provisioner.runCommand("chmod +x /opt/opperator/opperator"); err != nil {
-				updateErr = fmt.Errorf("failed to make binary executable: %w", err)
+				# Fetch the latest release tag from GitHub API
+				LATEST_VERSION=$(curl -sL https://api.github.com/repos/opper-ai/opperator/releases/latest | grep '"tag_name"' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+
+				if [ -z "$LATEST_VERSION" ]; then
+					echo "Failed to fetch latest version"
+					exit 1
+				fi
+
+				echo "Downloading opperator version: $LATEST_VERSION"
+
+				# Download the versioned Linux amd64 release
+				curl -sL "https://github.com/opper-ai/opperator/releases/download/${LATEST_VERSION}/opperator-${LATEST_VERSION}-linux-amd64.tar.gz" -o opperator.tar.gz
+
+				# Extract the binary (it's named with version, e.g., opperator-v0.1.0-linux-amd64)
+				tar -xzf opperator.tar.gz
+
+				# Find the extracted binary (should be opperator-{version}-linux-amd64)
+				BINARY=$(find . -maxdepth 1 -name "opperator-*-linux-amd64" -type f | head -n1)
+
+				if [ -z "$BINARY" ]; then
+					echo "Failed to find extracted binary"
+					exit 1
+				fi
+
+				# Move to /opt/opperator
+				mv "$BINARY" /opt/opperator/opperator
+
+				# Clean up
+				rm opperator.tar.gz
+
+				# Set executable permissions
+				chmod +x /opt/opperator/opperator
+				chown opperator:opperator /opt/opperator/opperator
+
+				echo "Successfully updated to opperator $LATEST_VERSION"
+			`
+
+			if err := provisioner.runCommand(downloadCmd); err != nil {
+				updateErr = fmt.Errorf("failed to download and install binary: %w", err)
 				return
 			}
 
