@@ -68,6 +68,8 @@ func (r *localToolRunner) Execute(ctx context.Context, name string, args string,
 		return tooling.RunRestartAgent(ctx, args)
 	case tooling.GetLogsToolName:
 		return tooling.RunGetLogs(ctx, args)
+	case tooling.MoveAgentToolName:
+		return tooling.RunMoveAgent(ctx, args)
 	case tooling.ManageSecretToolName:
 		return r.runManageSecret(ctx, args)
 	case tooling.ListSecretsToolName:

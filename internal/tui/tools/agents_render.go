@@ -26,6 +26,7 @@ func init() {
 	registerStopAgentRenderer()
 	registerRestartAgentRenderer()
 	registerGetLogsRenderer()
+	registerMoveAgentRenderer()
 	registerFocusAgentRenderer()
 	registerAgentCommandRenderer()
 }
@@ -423,6 +424,71 @@ func registerGetLogsRenderer() {
 				title += fmt.Sprintf(" (last %d)", params.Lines)
 			}
 			return title
+		},
+	})
+}
+
+func registerMoveAgentRenderer() {
+	toolregistry.Register(MoveAgentToolName, toolregistry.Definition{
+		Label: "Move Agent",
+		Pending: func(call tooltypes.Call, width int, spinner string) string {
+			t := styles.CurrentTheme()
+			var params MoveAgentParams
+			_ = json.Unmarshal([]byte(call.Input), &params)
+			target := strings.TrimSpace(params.AgentName)
+			title := "Move agent"
+			if target != "" {
+				title = fmt.Sprintf("Moving %s to local", filepath.Base(target))
+			}
+			header := lipgloss.NewStyle().Foreground(t.FgMuted).Render("└ " + title + " ")
+			return strings.TrimSpace(header + spinner)
+		},
+		Render: func(call tooltypes.Call, result tooltypes.Result, width int) string {
+			t := styles.CurrentTheme()
+			var params MoveAgentParams
+			_ = json.Unmarshal([]byte(call.Input), &params)
+
+			var meta MoveAgentMetadata
+			if result.Metadata != "" {
+				_ = json.Unmarshal([]byte(result.Metadata), &meta)
+			}
+
+			agentName := strings.TrimSpace(meta.AgentName)
+			if agentName == "" {
+				agentName = strings.TrimSpace(params.AgentName)
+			}
+			sourceDaemon := strings.TrimSpace(meta.SourceDaemon)
+
+			trimmed := filepath.Base(agentName)
+			if trimmed == "" {
+				trimmed = agentName
+			}
+
+			title := fmt.Sprintf("Move %s", trimmed)
+			if sourceDaemon != "" {
+				title = fmt.Sprintf("Move %s from @%s to local", trimmed, sourceDaemon)
+			}
+
+			header := lipgloss.NewStyle().Foreground(t.FgMuted).Render("└ " + title)
+			content := strings.TrimSpace(result.Content)
+			ok := !strings.HasPrefix(strings.ToLower(content), "error:")
+			style := lipgloss.NewStyle().Foreground(t.Error)
+			indicator := "✗ "
+			if ok {
+				style = lipgloss.NewStyle().Foreground(t.Success)
+				indicator = "✓ "
+			}
+			gutter := lipgloss.NewStyle().MarginLeft(2).Foreground(t.FgMuted).Render("│ ")
+			body := style.Render(indicator + content)
+			return header + "\n\n" + gutter + body
+		},
+		SummaryRender: func(call tooltypes.Call, result tooltypes.Result, width int) string {
+			var params MoveAgentParams
+			_ = json.Unmarshal([]byte(call.Input), &params)
+			if name := strings.TrimSpace(params.AgentName); name != "" {
+				return "Move " + filepath.Base(name) + " to local"
+			}
+			return "Move agent"
 		},
 	})
 }

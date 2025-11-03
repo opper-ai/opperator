@@ -720,7 +720,7 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 	case ipc.RequestPackageAgent:
 		return s.packageAgent(req)
 	default:
-		return ipc.Response{Success: false, Error: "unknown request type"}
+		return ipc.Response{Success: false, Error: fmt.Sprintf("unknown request type: %q", req.Type)}
 	}
 }
 

@@ -25,6 +25,7 @@ func BuilderSpecs() []Spec {
 		StopAgentSpec(),
 		RestartAgentSpec(),
 		GetLogsSpec(),
+		MoveAgentSpec(),
 		ListSecretsSpec(),
 		ManageSecretSpec(),
 		ViewSpec(),

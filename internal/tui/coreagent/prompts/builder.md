@@ -112,11 +112,33 @@ agent_command__my_agent__another_command(...)         # Test functionality
 ### Managing Agents
 
 **Lifecycle management:**
-- `start_agent` — Start a stopped agent
-- `stop_agent` — Stop a running agent
-- `restart_agent` — Restart an agent (stop + start)
-- `list_agents` — Show all registered agents
-- `get_logs` — Retrieve agent logs for observation
+- `start_agent` — Start a stopped agent (works with local and cloud agents)
+- `stop_agent` — Stop a running agent (works with local and cloud agents)
+- `restart_agent` — Restart an agent (works with local and cloud agents)
+- `list_agents` — Show all registered agents (includes agents on cloud daemons, indicated with @daemon-name)
+- `get_logs` — Retrieve agent logs for observation (works with local and cloud agents)
+- `move_agent` — Move an agent from a cloud/remote daemon to local (cloud-to-local only)
+
+**Moving agents from cloud to local:**
+- **When to move**: If the user wants to modify/edit a cloud agent, you MUST move it to local first using `move_agent`
+- Cloud agents cannot be modified directly — only local agents can be edited, have dependencies installed, or code changed
+- Use `move_agent(agent_name="name")` to bring cloud agents to local
+- **CRITICAL**: Only cloud-to-local moves are allowed (cannot move from local to cloud)
+- Secrets are NOT transferred (must be configured separately on local)
+- Agent is REMOVED from source daemon after successful move
+- Agent automatically starts on local daemon after move
+- Cannot overwrite existing local agents (operation will fail)
+- Virtual environment is automatically recreated after transfer
+
+**Deploying/moving agents to cloud:**
+- **You CANNOT do this from the builder** - the `move_agent` tool only supports cloud-to-local moves
+- If the user asks to deploy/move an agent to cloud, instruct them to use the CLI command:
+  ```
+  op agent move {agent_name} --to={daemon_name}
+  ```
+- Example: `op agent move my-agent --to=production`
+- List available daemons with: `op daemon list`
+- The CLI handles the full transfer including secrets syncing to remote daemons
 
 **Deleting agents:**
 - Remove the agent directory under `~/.config/opperator/agents/<agent-name>/`
