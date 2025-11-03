@@ -183,6 +183,45 @@ func RemoveDaemon(name string, force bool) error {
 	return nil
 }
 
+// SetDaemonEnabled enables or disables a daemon
+func SetDaemonEnabled(name string, enabled bool) error {
+	// Prevent modifying the local daemon
+	if name == "local" {
+		return fmt.Errorf("cannot modify 'local' daemon - it is automatically managed")
+	}
+
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		return fmt.Errorf("failed to load daemon registry: %w", err)
+	}
+
+	// Check if daemon exists
+	daemon, err := registry.GetDaemon(name)
+	if err != nil {
+		return err
+	}
+
+	// Update enabled status
+	daemon.Enabled = enabled
+	if err := registry.AddDaemon(*daemon); err != nil {
+		return fmt.Errorf("failed to update daemon: %w", err)
+	}
+
+	// Save registry
+	if err := config.SaveDaemonRegistry(registry); err != nil {
+		return fmt.Errorf("failed to save daemon registry: %w", err)
+	}
+
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	fmt.Printf("✓ Daemon '%s' %s\n", name, status)
+	fmt.Printf("  Address: %s\n", daemon.Address)
+
+	return nil
+}
+
 // TestDaemon tests connectivity to a daemon
 func TestDaemon(name string) error {
 	registry, err := config.LoadDaemonRegistry()

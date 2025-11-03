@@ -32,6 +32,7 @@ import (
 	sessionstate "tui/sessionstate"
 	streaming "tui/streaming"
 	tooling "tui/tools"
+	"tui/util"
 
 	"tui/internal/protocol"
 )
@@ -607,6 +608,12 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 	case agentStateEventMsg:
 		currentAgent := strings.TrimSpace(m.currentActiveAgentName())
 		coreID := strings.TrimSpace(m.currentCoreAgentID())
+
+		// Handle daemon health events
+		if v.Type == "daemon_health" && v.Status == "disabled" {
+			warnMsg := fmt.Sprintf("Daemon '%s' is unreachable and has been temporarily disabled. Re-enable with: op daemon enable %s", v.Daemon, v.Daemon)
+			return tea.Batch(util.ReportWarn(warnMsg), m.waitAgentStateEvent())
+		}
 
 		if v.Type == "status" && v.Status != "" {
 			m.updateAgentStatusAndRefreshStats(v.AgentName, v.Daemon, v.Status)

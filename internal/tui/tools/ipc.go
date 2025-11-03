@@ -47,8 +47,12 @@ func dialIPCDaemon(ctx context.Context, daemonName string) (net.Conn, func(), er
 		return nil, nil, fmt.Errorf("invalid daemon address: %s", daemon.Address)
 	}
 
-	// Dial with timeout
-	d := net.Dialer{Timeout: 5 * time.Second}
+	// Dial with timeout - respect context deadline if set, otherwise use default
+	timeout := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(deadline)
+	}
+	d := net.Dialer{Timeout: timeout}
 	conn, err := d.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, nil, err

@@ -284,6 +284,30 @@ var daemonTestCmd = &cobra.Command{
 	},
 }
 
+var daemonEnableCmd = &cobra.Command{
+	Use:   "enable [name]",
+	Short: "Enable a daemon connection",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := cli.SetDaemonEnabled(args[0], true); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var daemonDisableCmd = &cobra.Command{
+	Use:   "disable [name]",
+	Short: "Disable a daemon connection",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := cli.SetDaemonEnabled(args[0], false); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var cloudCmd = &cobra.Command{
 	Use:   "cloud",
 	Short: "Manage cloud deployments",
@@ -880,6 +904,8 @@ func init() {
 	daemonCmd.AddCommand(daemonListCmd)
 	daemonCmd.AddCommand(daemonRemoveCmd)
 	daemonCmd.AddCommand(daemonTestCmd)
+	daemonCmd.AddCommand(daemonEnableCmd)
+	daemonCmd.AddCommand(daemonDisableCmd)
 
 	// Cloud command
 	cloudCmd.AddCommand(cloudDeployCmd)

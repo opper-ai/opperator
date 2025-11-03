@@ -57,13 +57,72 @@ func (m *Model) initAgentStateWatcher() {
 		return
 	}
 
-	// Start watcher goroutine for each enabled daemon
+	// Start watcher goroutine for each enabled daemon with health check
 	for _, daemon := range registry.Daemons {
 		if !daemon.Enabled {
 			continue
 		}
-		go m.watchSingleDaemon(ctx, daemon.Name, eventCh)
+
+		// For non-local daemons, do a quick health check first
+		if daemon.Name != "local" {
+			go m.watchWithHealthCheck(ctx, daemon.Name, eventCh)
+		} else {
+			// Local daemon is always assumed healthy
+			go m.watchSingleDaemon(ctx, daemon.Name, eventCh)
+		}
 	}
+}
+
+// watchWithHealthCheck performs a quick health check before starting the watcher
+func (m *Model) watchWithHealthCheck(ctx context.Context, daemonName string, eventCh chan<- agentStateEventMsg) {
+	// Quick health check with short timeout
+	healthCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	// Try to establish connection quickly
+	_, cleanup, err := tools.OpenStreamToDaemon(healthCtx, daemonName, struct {
+		Type string `json:"type"`
+	}{Type: "watch_agent_state"})
+
+	if err != nil {
+		// Health check failed - auto-disable daemon
+		if disableErr := m.autoDisableDaemon(daemonName); disableErr == nil {
+			// Send a special event to notify the TUI
+			select {
+			case eventCh <- agentStateEventMsg{
+				Type:   "daemon_health",
+				Daemon: daemonName,
+				Status: "disabled",
+			}:
+			case <-ctx.Done():
+			}
+		}
+		return
+	}
+
+	// Health check passed - cleanup and start regular watcher
+	cleanup()
+	m.watchSingleDaemon(ctx, daemonName, eventCh)
+}
+
+// autoDisableDaemon automatically disables an unreachable daemon
+func (m *Model) autoDisableDaemon(daemonName string) error {
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		return err
+	}
+
+	daemon, err := registry.GetDaemon(daemonName)
+	if err != nil {
+		return err
+	}
+
+	daemon.Enabled = false
+	if err := registry.AddDaemon(*daemon); err != nil {
+		return err
+	}
+
+	return config.SaveDaemonRegistry(registry)
 }
 
 // watchSingleDaemon watches agent state events from a single daemon
