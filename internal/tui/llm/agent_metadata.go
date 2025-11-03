@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"opperator/config"
+	"tui/cache"
 	"tui/components/sidebar"
 	"tui/internal/protocol"
 
@@ -31,8 +34,53 @@ type AgentInfo struct {
 	Daemon       string // Which daemon this agent is running on
 }
 
+var (
+	// Cache for agent list with 5 second TTL (only for remote daemons)
+	// Short TTL ensures agent transfers show up quickly in the UI
+	agentListCache = cache.NewTTLCache[string, []AgentInfo](5 * time.Second)
+
+	// Cache for agent metadata with 3 second TTL (only for remote daemons)
+	agentMetadataCache = cache.NewTTLCache[string, AgentMetadata](3 * time.Second)
+)
+
+// hasRemoteDaemons checks if there are any enabled remote daemons in the registry
+func hasRemoteDaemons() bool {
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		return false
+	}
+
+	for _, daemon := range registry.Daemons {
+		if daemon.Enabled && daemon.Name != "local" {
+			return true
+		}
+	}
+	return false
+}
+
+// InvalidateAgentListCache clears the agent list cache
+// This should be called when agent state changes that affect the list
+func InvalidateAgentListCache() {
+	agentListCache.InvalidateAll()
+}
+
+// InvalidateAgentMetadataCache clears a specific agent's metadata cache
+func InvalidateAgentMetadataCache(agentName string) {
+	agentMetadataCache.Invalidate(agentName)
+}
+
 // ListAgents retrieves agents from all enabled daemons in the registry.
 func ListAgents(ctx context.Context) ([]AgentInfo, error) {
+	// Only use cache if there are remote daemons
+	const cacheKey = "all_agents"
+	useCache := hasRemoteDaemons()
+
+	if useCache {
+		if cached, ok := agentListCache.Get(cacheKey); ok {
+			return cached, nil
+		}
+	}
+
 	// Load daemon registry
 	registry, err := config.LoadDaemonRegistry()
 	if err != nil {
@@ -40,27 +88,64 @@ func ListAgents(ctx context.Context) ([]AgentInfo, error) {
 		return listAgentsFromDaemon(ctx, "local")
 	}
 
-	var allAgents []AgentInfo
-
-	// Collect agents from all enabled daemons
+	// Collect enabled daemons
+	var enabledDaemons []config.DaemonConfig
 	for _, daemon := range registry.Daemons {
-		if !daemon.Enabled {
-			continue
+		if daemon.Enabled {
+			enabledDaemons = append(enabledDaemons, daemon)
 		}
+	}
 
-		// Get agents from this daemon
-		agents, err := listAgentsFromDaemonConfig(ctx, daemon.Name)
-		if err != nil {
-			// Log error but continue with other daemons
-			// This allows the TUI to work even if some daemons are offline
-			continue
-		}
+	if len(enabledDaemons) == 0 {
+		return []AgentInfo{}, nil
+	}
 
-		// Tag each agent with its daemon and add to collection
-		for i := range agents {
-			agents[i].Daemon = daemon.Name
+	// Query all daemons in parallel
+	type daemonResult struct {
+		agents []AgentInfo
+		err    error
+	}
+
+	results := make(chan daemonResult, len(enabledDaemons))
+	var wg sync.WaitGroup
+
+	for _, daemon := range enabledDaemons {
+		wg.Add(1)
+		go func(d config.DaemonConfig) {
+			defer wg.Done()
+
+			agents, err := listAgentsFromDaemonConfig(ctx, d.Name)
+			if err != nil {
+				// Log error but continue with other daemons
+				// This allows the TUI to work even if some daemons are offline
+				results <- daemonResult{agents: nil, err: err}
+				return
+			}
+
+			// Tag each agent with its daemon
+			for i := range agents {
+				agents[i].Daemon = d.Name
+			}
+
+			results <- daemonResult{agents: agents, err: nil}
+		}(daemon)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(results)
+
+	// Collect results
+	var allAgents []AgentInfo
+	for result := range results {
+		if result.err == nil && result.agents != nil {
+			allAgents = append(allAgents, result.agents...)
 		}
-		allAgents = append(allAgents, agents...)
+	}
+
+	// Cache the results only if using cache (remote daemons exist)
+	if useCache {
+		agentListCache.Set(cacheKey, allAgents)
 	}
 
 	return allAgents, nil
@@ -149,6 +234,16 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 		agentDaemon = "local"
 	}
 
+	// Only use cache for remote agents
+	isRemoteAgent := agentDaemon != "local"
+
+	// Check cache first (only for remote agents)
+	if isRemoteAgent {
+		if cached, ok := agentMetadataCache.Get(trimmed); ok {
+			return cached, nil
+		}
+	}
+
 	// Try to fetch commands, but don't fail if agent is stopped/crashed
 	// The description, system prompt, and color are already set from the config
 	cmdPayload := struct {
@@ -159,7 +254,7 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 	// Query the correct daemon for commands
 	cmdData, err := tooling.IPCRequestToDaemon(ctx, agentDaemon, cmdPayload)
 	if err != nil {
-		// Agent might be stopped - return metadata without commands
+		// Agent might be stopped - return metadata without commands (but don't cache)
 		return result, nil
 	}
 
@@ -169,15 +264,21 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 		Commands []protocol.CommandDescriptor `json:"commands"`
 	}
 	if err := json.Unmarshal(cmdData, &cmdResp); err != nil {
-		// Failed to decode - return metadata without commands
+		// Failed to decode - return metadata without commands (but don't cache)
 		return result, nil
 	}
 	if !cmdResp.Success {
-		// Command list failed (agent might be stopped) - return metadata without commands
+		// Command list failed (agent might be stopped) - return metadata without commands (but don't cache)
 		return result, nil
 	}
 
 	result.Commands = protocol.NormalizeCommandDescriptors(cmdResp.Commands)
+
+	// Cache the successful result (only for remote agents)
+	if isRemoteAgent {
+		agentMetadataCache.Set(trimmed, result)
+	}
+
 	return result, nil
 }
 

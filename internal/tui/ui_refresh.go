@@ -565,6 +565,19 @@ func (m *Model) refreshAgentListCmd() tea.Cmd {
 	}
 }
 
+// refreshAgentListDelayedCmd schedules a delayed agent list refresh
+// This is useful after operations like agent transfers where we want to
+// give the daemon time to process the changes before refreshing
+func (m *Model) refreshAgentListDelayedCmd(delay time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(delay)
+		return agentListRefreshNeededMsg{}
+	}
+}
+
+// agentListRefreshNeededMsg signals that an agent list refresh should occur
+type agentListRefreshNeededMsg struct{}
+
 // handleAgentListRefreshed handles the async agent list refresh result
 func (m *Model) handleAgentListRefreshed(msg agentListRefreshedMsg) tea.Cmd {
 	if m.sidebar == nil {

@@ -830,6 +830,11 @@ func (m *Model) handleCycleAgentResult(msg cycleAgentResultMsg) tea.Cmd {
 		}
 	}
 
+	// If switching to Opperator, fetch the agent list
+	if msg.coreID == coreagent.IDOpperator && m.sidebar != nil {
+		cmds = append(cmds, m.refreshAgentListCmd())
+	}
+
 	switch len(cmds) {
 	case 0:
 		return nil

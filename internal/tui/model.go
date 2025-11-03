@@ -488,11 +488,9 @@ func (m *Model) Init() tea.Cmd {
 		}
 	}
 
-	// Fetch initial logs and custom sections for the active agent on startup
-	if activeName := m.currentActiveAgentName(); strings.TrimSpace(activeName) != "" {
-		cmds = append(cmds, m.fetchInitialAgentLogsCmd(activeName))
-		cmds = append(cmds, m.fetchInitialCustomSectionsCmd(activeName))
-	}
+	// Note: Logs and custom sections are now fetched lazily via event-driven updates
+	// from the agent state watcher. This reduces initial startup latency, especially
+	// with remote daemons. The watcher will provide these in real-time as events occur.
 
 	return tea.Batch(cmds...)
 }
@@ -618,6 +616,12 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		if v.Type == "status" && v.Status != "" {
 			m.updateAgentStatusAndRefreshStats(v.AgentName, v.Daemon, v.Status)
 
+			// Invalidate caches when agent status changes
+			llm.InvalidateAgentListCache()
+			if v.AgentName != "" {
+				llm.InvalidateAgentMetadataCache(v.AgentName)
+			}
+
 			// Track if we need to fetch metadata when agent starts
 			shouldFetchMetadata := false
 			isFocusedAgentInBuilder := false
@@ -655,6 +659,10 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 			}
 			if shouldRefreshAgentList {
 				cmds = append(cmds, m.refreshAgentListCmd())
+
+				// Schedule a delayed refresh to catch agent deletions/additions
+				// that might happen during transfers (e.g., agent stopped here, then deleted)
+				cmds = append(cmds, m.refreshAgentListDelayedCmd(2*time.Second))
 			}
 			if len(cmds) > 0 {
 				cmds = append(cmds, m.waitAgentStateEvent())
@@ -728,6 +736,11 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 				systemPrompt := strings.TrimSpace(v.SystemPrompt)
 				color := strings.TrimSpace(v.Color)
 
+				// Invalidate metadata cache when metadata updates
+				if agentName != "" {
+					llm.InvalidateAgentMetadataCache(agentName)
+				}
+
 				if m.agents != nil {
 					m.agents.updateActiveAgentMetadata(agentName, description, systemPrompt, color)
 				}
@@ -785,6 +798,13 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 		return m.handleAgentMetadataFetched(v)
 	case agentListRefreshedMsg:
 		return m.handleAgentListRefreshed(v)
+	case agentListRefreshNeededMsg:
+		// Invalidate cache and trigger immediate refresh
+		llm.InvalidateAgentListCache()
+		if m.sidebar != nil && m.currentCoreAgentID() == coreagent.IDOpperator {
+			return m.refreshAgentListCmd()
+		}
+		return nil
 	case focusedAgentMetadataMsg:
 		return m.handleFocusedAgentMetadata(v)
 	case initialAgentLogsMsg:
