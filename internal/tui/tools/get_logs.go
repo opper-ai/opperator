@@ -64,7 +64,14 @@ func RunGetLogs(ctx context.Context, arguments string) (string, string) {
 		params.Lines = 20
 	}
 
-	respb, err := ipcRequestCtx(ctx, struct {
+	// Find which daemon the agent belongs to
+	daemonName, err := FindAgentDaemon(ctx, params.Name)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), ""
+	}
+
+	// Query logs from the correct daemon
+	respb, err := ipcRequestToDaemon(ctx, daemonName, struct {
 		Type      string `json:"type"`
 		AgentName string `json:"agent_name"`
 	}{Type: "get_logs", AgentName: params.Name})

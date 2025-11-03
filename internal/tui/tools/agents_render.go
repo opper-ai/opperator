@@ -17,6 +17,7 @@ type agentProcess struct {
 	Status      string
 	PID         int
 	Description string
+	Daemon      string // Which daemon this agent belongs to
 }
 
 func init() {
@@ -149,13 +150,20 @@ func registerListAgentsRenderer() {
 					pid = lipgloss.NewStyle().Foreground(t.FgMuted).Render(fmt.Sprintf(" pid %d", entry.PID))
 				}
 				name := lipgloss.NewStyle().Foreground(t.FgBase).Render(strings.TrimSpace(entry.Name))
+
+				// Add daemon indicator for cloud agents
+				daemonIndicator := ""
+				if daemon := strings.TrimSpace(entry.Daemon); daemon != "" && daemon != "local" {
+					daemonIndicator = lipgloss.NewStyle().Foreground(t.Info).Render(fmt.Sprintf("@%s ", daemon))
+				}
+
 				desc := strings.TrimSpace(entry.Description)
 				if desc == "" && meta.Descriptions != nil {
 					if v, ok := meta.Descriptions[name]; ok {
 						desc = strings.TrimSpace(v)
 					}
 				}
-				rows = append(rows, gutter+fmt.Sprintf("%s — %s%s", name, statusView, pid))
+				rows = append(rows, gutter+fmt.Sprintf("%s%s — %s%s", daemonIndicator, name, statusView, pid))
 				if desc != "" {
 					desc = strings.ReplaceAll(desc, "\n", " ")
 					desc = strings.ReplaceAll(desc, "\r", " ")

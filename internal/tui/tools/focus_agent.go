@@ -61,42 +61,17 @@ func RunFocusAgent(ctx context.Context, arguments string) (string, string) {
 
 	agentName := strings.TrimSpace(params.AgentName)
 
-	// If not clearing focus, validate that the agent exists
+	// If not clearing focus, validate that the agent exists and is local
 	if agentName != "" {
-		respb, err := ipcRequestCtx(ctx, struct {
-			Type string `json:"type"`
-		}{Type: "list"})
+		// Use FindAgentDaemon to determine which daemon the agent belongs to
+		daemonName, err := FindAgentDaemon(ctx, agentName)
 		if err != nil {
 			return fmt.Sprintf("error: %v", err), ""
 		}
 
-		var resp struct {
-			Success   bool   `json:"success"`
-			Error     string `json:"error"`
-			Processes []struct {
-				Name   string `json:"name"`
-				Status string `json:"status"`
-			} `json:"processes"`
-		}
-		if err := json.Unmarshal(respb, &resp); err != nil {
-			return fmt.Sprintf("error decoding response: %v", err), ""
-		}
-
-		if !resp.Success {
-			return fmt.Sprintf("error: %s", resp.Error), ""
-		}
-
-		// Check if agent exists
-		found := false
-		for _, p := range resp.Processes {
-			if p.Name == agentName {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			return fmt.Sprintf("error: agent %q does not exist", agentName), ""
+		// Reject non-local agents
+		if daemonName != "local" {
+			return fmt.Sprintf("error: cannot focus on cloud agent %q (on daemon @%s). The builder can only focus on local agents.", agentName, daemonName), ""
 		}
 	}
 
