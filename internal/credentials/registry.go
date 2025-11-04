@@ -1,66 +1,58 @@
 package credentials
 
 import (
-	"encoding/json"
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
-	"opperator/config"
+	"opperator/pkg/migration"
+
+	_ "modernc.org/sqlite"
 )
 
 var errEmptySecretName = errors.New("secret name cannot be empty")
 
-func registryPath() (string, error) {
-	dir, err := config.GetConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "secrets.json"), nil
-}
+var dbInstance *sql.DB
 
-func loadRegistry() ([]string, error) {
-	path, err := registryPath()
+func getDB() (*sql.DB, error) {
+	if dbInstance != nil {
+		return dbInstance, nil
+	}
+
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
+
+	dir := filepath.Join(home, ".config", "opperator")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	var names []string
-	if len(data) == 0 {
-		return nil, nil
-	}
-	if err := json.Unmarshal(data, &names); err != nil {
-		return nil, fmt.Errorf("decode secrets registry: %w", err)
-	}
-	return names, nil
-}
 
-func saveRegistry(names []string) error {
-	path, err := registryPath()
+	dbPath := filepath.Join(dir, "opperator.db")
+	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=10000")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if len(names) == 0 {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	// Run migrations
+	migrationRunner := migration.NewRunner(db)
+	if err := migrationRunner.Run(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
-	sort.Strings(names)
-	data, err := json.MarshalIndent(names, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0600)
+
+	dbInstance = db
+	return dbInstance, nil
 }
 
 func RegisterSecret(name string) error {
@@ -68,17 +60,20 @@ func RegisterSecret(name string) error {
 	if trimmed == "" {
 		return errEmptySecretName
 	}
-	names, err := loadRegistry()
+
+	db, err := getDB()
 	if err != nil {
 		return err
 	}
-	for _, existing := range names {
-		if existing == trimmed {
-			return nil
-		}
-	}
-	names = append(names, trimmed)
-	return saveRegistry(names)
+
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO secrets(name, created_at, updated_at) VALUES(?, ?, ?)
+		 ON CONFLICT(name) DO UPDATE SET updated_at = ?`,
+		trimmed, now, now, now)
+	return err
 }
 
 func UnregisterSecret(name string) error {
@@ -86,30 +81,43 @@ func UnregisterSecret(name string) error {
 	if trimmed == "" {
 		return errEmptySecretName
 	}
-	names, err := loadRegistry()
+
+	db, err := getDB()
 	if err != nil {
 		return err
 	}
-	out := names[:0]
-	removed := false
-	for _, existing := range names {
-		if existing == trimmed {
-			removed = true
-			continue
-		}
-		out = append(out, existing)
-	}
-	if !removed {
-		return nil
-	}
-	return saveRegistry(out)
+
+	ctx := context.Background()
+	_, err = db.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, trimmed)
+	return err
 }
 
 func ListSecrets() ([]string, error) {
-	names, err := loadRegistry()
+	db, err := getDB()
 	if err != nil {
 		return nil, err
 	}
+
+	ctx := context.Background()
+	rows, err := db.QueryContext(ctx, `SELECT name FROM secrets ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Check if OpperAPIKeyName exists in keyring and add it if not in DB
 	exists, err := HasSecret(OpperAPIKeyName)
 	if err != nil {
 		return nil, err
@@ -124,8 +132,9 @@ func ListSecrets() ([]string, error) {
 		}
 		if !seen {
 			names = append(names, OpperAPIKeyName)
+			sort.Strings(names)
 		}
 	}
-	sort.Strings(names)
+
 	return names, nil
 }
