@@ -826,7 +826,32 @@ var versionUpdateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\n✓ Successfully updated to version %s\n", info.LatestVersion)
-		fmt.Println("Please restart Opperator for the changes to take effect")
+
+		// Stop local daemon if running
+		if daemon.IsRunning() {
+			fmt.Println("\nStopping local daemon...")
+			pid, err := daemon.ReadPIDFile()
+			if err != nil {
+				fmt.Printf("Warning: Failed to read daemon PID: %v\n", err)
+			} else {
+				if err := daemon.Shutdown(pid, nil); err != nil {
+					fmt.Printf("Warning: Failed to stop local daemon: %v\n", err)
+				} else {
+					// Clean up PID file and socket
+					if err := daemon.CleanupStaleFiles(); err != nil {
+						log.Printf("Warning: cleanup failed: %v", err)
+					}
+					fmt.Println("✓ Local daemon stopped")
+				}
+			}
+		}
+
+		// Update all cloud daemons
+		if err := deployment.UpdateAllCloudDaemons(includePrerelease); err != nil {
+			fmt.Printf("Warning: Some cloud daemon updates may have failed: %v\n", err)
+		}
+
+		fmt.Println("\nUpdate complete! The daemon will start automatically when you run 'op' again.")
 	},
 }
 

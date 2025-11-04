@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -217,11 +218,14 @@ func RunBootstrapNewAgent(ctx context.Context, arguments string) (string, string
 	meta.Steps = append(meta.Steps, "Created pyproject.toml")
 
 	// Initialize uv project or fallback to venv
+	log.Printf("Initializing virtual environment for agent: %s", agentName)
 	if err := initializeVenv(agentDir); err != nil {
+		log.Printf("Failed to initialize venv for %s: %v", agentName, err)
 		meta.Error = fmt.Sprintf("failed to initialize virtual environment: %v", err)
 		mb, _ := json.Marshal(meta)
 		return fmt.Sprintf("Error: %s", meta.Error), string(mb)
 	}
+	log.Printf("Virtual environment initialized successfully for agent: %s", agentName)
 	meta.Steps = append(meta.Steps, "Initialized virtual environment and installed dependencies")
 
 	// Update agents.yaml
@@ -298,35 +302,64 @@ func initializeVenv(agentDir string) error {
 
 	// Step 1: Create virtual environment
 	// Try uv first
+	log.Printf("Attempting to create venv with uv in %s", agentDir)
 	cmd := exec.Command("uv", "venv", ".venv")
 	cmd.Dir = agentDir
-	uvAvailable := cmd.Run() == nil
+	uvOutput, uvErr := cmd.CombinedOutput()
+	uvAvailable := uvErr == nil
 
 	if !uvAvailable {
+		log.Printf("uv not available, falling back to python3 -m venv")
 		// Fallback to python -m venv
 		cmd = exec.Command("python3", "-m", "venv", ".venv")
 		cmd.Dir = agentDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to create venv: %w", err)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("Failed to create venv: %v, output: %s", err, string(output))
+			return fmt.Errorf("failed to create venv: %w (output: %s)", err, string(output))
+		}
+		log.Printf("Virtual environment created with python3 -m venv")
+	} else {
+		log.Printf("Virtual environment created with uv")
+		if len(uvOutput) > 0 {
+			log.Printf("uv output: %s", string(uvOutput))
 		}
 	}
 
 	// Step 2: Install agent as editable package (makes opperator/ importable)
 	if uvAvailable {
 		// Use uv pip install with --python flag
+		log.Printf("Installing agent package with uv pip install")
 		cmd = exec.Command("uv", "pip", "install", "-e", agentDir, "--python", venvPython)
-		if err := cmd.Run(); err != nil {
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("uv pip install failed: %v, output: %s, trying pip fallback", err, string(output))
 			// If uv pip install fails, try pip fallback
 			cmd = exec.Command(venvPython, "-m", "pip", "install", "-e", agentDir)
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("failed to install agent package: %w", err)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("pip install failed: %v, output: %s", err, string(output))
+				return fmt.Errorf("failed to install agent package: %w (output: %s)", err, string(output))
+			}
+			log.Printf("Agent package installed with pip")
+		} else {
+			log.Printf("Agent package installed with uv pip")
+			if len(output) > 0 {
+				log.Printf("uv pip output: %s", string(output))
 			}
 		}
 	} else {
 		// Use pip directly
+		log.Printf("Installing agent package with pip")
 		cmd = exec.Command(venvPython, "-m", "pip", "install", "-e", agentDir)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to install agent package: %w", err)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("pip install failed: %v, output: %s", err, string(output))
+			return fmt.Errorf("failed to install agent package: %w (output: %s)", err, string(output))
+		}
+		log.Printf("Agent package installed with pip")
+		if len(output) > 0 {
+			log.Printf("pip output: %s", string(output))
 		}
 	}
 

@@ -15,6 +15,143 @@ import (
 	"opperator/version"
 )
 
+// UpdateAllCloudDaemons updates all cloud daemons in the registry
+func UpdateAllCloudDaemons(preRelease bool) error {
+	// Load daemon registry
+	registry, err := config.LoadDaemonRegistry()
+	if err != nil {
+		return fmt.Errorf("failed to load daemon registry: %w", err)
+	}
+
+	// Find all cloud daemons
+	var cloudDaemons []*config.DaemonConfig
+	for i := range registry.Daemons {
+		daemon := &registry.Daemons[i]
+		if daemon.Provider != "" && daemon.Provider != "local" && daemon.Enabled {
+			cloudDaemons = append(cloudDaemons, daemon)
+		}
+	}
+
+	if len(cloudDaemons) == 0 {
+		fmt.Println("No cloud daemons found to update")
+		return nil
+	}
+
+	fmt.Printf("\nFound %d cloud daemon(s) to update:\n", len(cloudDaemons))
+	for _, daemon := range cloudDaemons {
+		fmt.Printf("  • %s (%s)\n", daemon.Name, daemon.Provider)
+	}
+	fmt.Println()
+
+	// Track results
+	type updateResult struct {
+		daemonName string
+		success    bool
+		err        error
+	}
+	results := make([]updateResult, 0, len(cloudDaemons))
+
+	// Update each cloud daemon
+	for _, daemon := range cloudDaemons {
+		fmt.Printf("🔄 Updating daemon '%s'...\n", daemon.Name)
+		err := updateSingleCloudDaemon(daemon, preRelease)
+		results = append(results, updateResult{
+			daemonName: daemon.Name,
+			success:    err == nil,
+			err:        err,
+		})
+
+		if err != nil {
+			fmt.Printf("  ✗ Failed to update '%s': %v\n\n", daemon.Name, err)
+		} else {
+			fmt.Printf("  ✓ Successfully updated '%s'\n\n", daemon.Name)
+		}
+	}
+
+	// Print summary
+	successCount := 0
+	failureCount := 0
+	for _, result := range results {
+		if result.success {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	fmt.Println("─────────────────────────────────────")
+	fmt.Printf("Update Summary: %d successful, %d failed\n", successCount, failureCount)
+
+	if failureCount > 0 {
+		fmt.Println("\nFailed updates:")
+		for _, result := range results {
+			if !result.success {
+				fmt.Printf("  ✗ %s: %v\n", result.daemonName, result.err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// updateSingleCloudDaemon updates a single cloud daemon without UI elements (for batch updates)
+func updateSingleCloudDaemon(daemon *config.DaemonConfig, preRelease bool) error {
+	ctx := context.Background()
+
+	// Get server info and SSH credentials
+	var serverIP string
+	var sshKey string
+
+	if daemon.Provider == "hetzner" {
+		if daemon.HetznerServerID == 0 {
+			return fmt.Errorf("no Hetzner server ID found for daemon '%s'", daemon.Name)
+		}
+
+		// Get Hetzner API key
+		apiKey, err := credentials.GetSecret(hetznerAPIKeySecret)
+		if err != nil || apiKey == "" {
+			return fmt.Errorf("Hetzner API key not found")
+		}
+
+		// Get server info from Hetzner
+		client := NewHetznerClient(apiKey)
+		serverInfo, err := client.GetServer(ctx, daemon.HetznerServerID)
+		if err != nil {
+			return fmt.Errorf("failed to get server info: %w", err)
+		}
+
+		serverIP = serverInfo.PublicIP
+
+		// Get SSH key from stored credentials
+		sshKeyName := fmt.Sprintf("HETZNER_SSH_KEY_%s", daemon.Name)
+		sshKey, err = credentials.GetSecret(sshKeyName)
+		if err != nil || sshKey == "" {
+			return fmt.Errorf("SSH key not found for daemon '%s'. Please run 'op cloud update %s' first to save the key", daemon.Name, daemon.Name)
+		}
+	} else {
+		return fmt.Errorf("updating '%s' provider daemons is not yet supported", daemon.Provider)
+	}
+
+	// Update binary and restart daemon
+	currentVersion := version.Get()
+	var err error
+
+	// Determine update strategy based on version
+	if currentVersion == "dev" {
+		// Dev version: build from local source and upload
+		err = updateFromSource(serverIP, sshKey)
+	} else {
+		// Release version: download from GitHub
+		err = updateFromGitHub(serverIP, sshKey, preRelease)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Update updates the opperator binary on a cloud daemon
 func Update(daemonName string, preRelease bool) error {
 	spinnerStyle := lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("#f7c0af"))
