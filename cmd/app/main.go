@@ -379,7 +379,8 @@ var cloudUpdateCmd = &cobra.Command{
 This is useful after you've made local changes and want to deploy them to production.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := deployment.Update(args[0]); err != nil {
+		preRelease, _ := cmd.Flags().GetBool("pre-release")
+		if err := deployment.Update(args[0], preRelease); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -912,6 +913,9 @@ func init() {
 	cloudCmd.AddCommand(cloudDestroyCmd)
 	cloudCmd.AddCommand(cloudListCmd)
 	cloudCmd.AddCommand(cloudUpdateCmd)
+
+	// Cloud update flags
+	cloudUpdateCmd.Flags().Bool("pre-release", false, "Update to the latest pre-release version instead of stable")
 
 	// Daemon add flags
 	daemonAddCmd.Flags().String("token", "", "Authentication token (can use env var: --token=$MY_TOKEN)")

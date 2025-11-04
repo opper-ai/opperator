@@ -16,7 +16,7 @@ import (
 )
 
 // Update updates the opperator binary on a cloud daemon
-func Update(daemonName string) error {
+func Update(daemonName string, preRelease bool) error {
 	spinnerStyle := lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("#f7c0af"))
 	ctx := context.Background()
 
@@ -137,11 +137,15 @@ func Update(daemonName string) error {
 			Run()
 	} else {
 		// Release version: download from GitHub
+		title := "Downloading latest release and restarting daemon..."
+		if preRelease {
+			title = "Downloading latest pre-release and restarting daemon..."
+		}
 		err = spinner.New().
-			Title("Downloading latest release and restarting daemon...").
+			Title(title).
 			Style(spinnerStyle).
 			Action(func() {
-				updateErr = updateFromGitHub(serverIP, sshKey)
+				updateErr = updateFromGitHub(serverIP, sshKey, preRelease)
 			}).
 			Run()
 	}
@@ -252,7 +256,7 @@ func updateFromSource(serverIP, sshKey string) error {
 }
 
 // updateFromGitHub downloads the latest release from GitHub (for release versions)
-func updateFromGitHub(serverIP, sshKey string) error {
+func updateFromGitHub(serverIP, sshKey string, preRelease bool) error {
 	// Give it extra time for download and restart
 	time.Sleep(2 * time.Second)
 
@@ -273,7 +277,50 @@ func updateFromGitHub(serverIP, sshKey string) error {
 	}
 
 	// Download and install latest release from GitHub
-	downloadCmd := `
+	var downloadCmd string
+	if preRelease {
+		downloadCmd = `
+		set -e
+		cd /tmp
+
+		# Fetch the latest pre-release tag from GitHub API (includes both releases and pre-releases)
+		LATEST_VERSION=$(curl -sL https://api.github.com/repos/opper-ai/opperator/releases | grep '"tag_name"' | head -n 1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+
+		if [ -z "$LATEST_VERSION" ]; then
+			echo "Failed to fetch latest pre-release version"
+			exit 1
+		fi
+
+		echo "Downloading opperator pre-release version: $LATEST_VERSION"
+
+		# Download the versioned Linux amd64 release
+		curl -sL "https://github.com/opper-ai/opperator/releases/download/${LATEST_VERSION}/opperator-${LATEST_VERSION}-linux-amd64.tar.gz" -o opperator.tar.gz
+
+		# Extract the binary (it's named with version, e.g., opperator-v0.1.0-linux-amd64)
+		tar -xzf opperator.tar.gz
+
+		# Find the extracted binary (should be opperator-{version}-linux-amd64)
+		BINARY=$(find . -maxdepth 1 -name "opperator-*-linux-amd64" -type f | head -n1)
+
+		if [ -z "$BINARY" ]; then
+			echo "Failed to find extracted binary"
+			exit 1
+		fi
+
+		# Move to /opt/opperator
+		mv "$BINARY" /opt/opperator/opperator
+
+		# Clean up
+		rm opperator.tar.gz
+
+		# Set executable permissions
+		chmod +x /opt/opperator/opperator
+		chown opperator:opperator /opt/opperator/opperator
+
+		echo "Successfully updated to opperator $LATEST_VERSION"
+	`
+	} else {
+		downloadCmd = `
 		set -e
 		cd /tmp
 
@@ -313,6 +360,7 @@ func updateFromGitHub(serverIP, sshKey string) error {
 
 		echo "Successfully updated to opperator $LATEST_VERSION"
 	`
+	}
 
 	if err := provisioner.runCommand(downloadCmd); err != nil {
 		return fmt.Errorf("failed to download and install binary: %w", err)
