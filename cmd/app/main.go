@@ -410,20 +410,20 @@ var asyncListCmd = &cobra.Command{
 }
 
 var asyncGetCmd = &cobra.Command{
-	Use:   "get",
+	Use:   "get [task_id]",
 	Short: "Show details for a specific async task",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, _ := cmd.Flags().GetString("id")
-		return cli.ShowAsyncTask(id)
+		return cli.ShowAsyncTask(args[0])
 	},
 }
 
 var asyncDeleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete [task_id]",
 	Short: "Delete an async task by id",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, _ := cmd.Flags().GetString("id")
-		return cli.DeleteAsyncTask(id)
+		return cli.DeleteAsyncTask(args[0])
 	},
 }
 
@@ -957,10 +957,6 @@ func init() {
 	asyncListCmd.Flags().String("session", "", "Filter tasks by session identifier")
 	asyncListCmd.Flags().String("client", "", "Filter tasks by client identifier")
 	asyncCmd.AddCommand(asyncListCmd)
-	asyncGetCmd.Flags().String("id", "", "Task identifier (required)")
-	asyncGetCmd.MarkFlagRequired("id")
-	asyncDeleteCmd.Flags().String("id", "", "Task identifier (required)")
-	asyncDeleteCmd.MarkFlagRequired("id")
 	asyncCmd.AddCommand(asyncGetCmd)
 	asyncCmd.AddCommand(asyncDeleteCmd)
 
