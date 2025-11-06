@@ -302,7 +302,10 @@ func New() (*Model, error) {
 	sidebarVisible := true
 	if deps.PreferencesStore != nil {
 		if visible, err := deps.PreferencesStore.GetBool(context.Background(), "sidebar.visible"); err == nil {
-			sidebarVisible = visible
+			// Only override default if a preference actually exists (not empty string)
+			if value, _ := deps.PreferencesStore.Get(context.Background(), "sidebar.visible"); value != "" {
+				sidebarVisible = visible
+			}
 		}
 	}
 
