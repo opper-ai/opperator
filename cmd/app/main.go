@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime/pprof"
 	"strings"
@@ -90,24 +91,17 @@ var rootCmd = &cobra.Command{
 }
 
 var daemonCmd = &cobra.Command{
-	Use:    "daemon",
-	Short:  "Daemon management commands",
-	Hidden: true, // Hide from help
+	Use:   "daemon",
+	Short: "Manage local and remote daemon connections",
 }
 
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start the daemon server",
+	Short: "Start the local daemon (runs in background by default)",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Make this daemon process a process group leader
-		// This allows us to kill the daemon and all its children with one signal
-		if err := syscall.Setpgid(0, 0); err != nil {
-			log.Printf("Warning: failed to create process group: %v", err)
-		} else {
-			log.Printf("Daemon running in process group: %d", os.Getpid())
-		}
+		foreground, _ := cmd.Flags().GetBool("foreground")
 
-		// First check if daemon is truly running
+		// Check if daemon is already running
 		if daemon.IsRunning() {
 			fmt.Println("Daemon is already running")
 			os.Exit(1)
@@ -123,10 +117,43 @@ var daemonStartCmd = &cobra.Command{
 			log.Printf("Warning: cleanup failed: %v", err)
 		}
 
-		// Double-check after cleanup - another process might have started during cleanup
-		if daemon.IsRunning() {
-			fmt.Println("Daemon is already running")
-			os.Exit(1)
+		// If not foreground mode, start in background and exit
+		if !foreground {
+			executable, err := os.Executable()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to get executable path: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Start daemon in background with --foreground flag
+			daemonCmd := exec.Command(executable, "daemon", "start", "--foreground")
+			if err := daemonCmd.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to start daemon: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("Starting daemon in background...")
+
+			// Wait for daemon to be running
+			for i := 0; i < 10; i++ {
+				time.Sleep(500 * time.Millisecond)
+				if daemon.IsRunning() {
+					fmt.Println("Daemon started successfully")
+					return
+				}
+			}
+
+			fmt.Println("Warning: Daemon may not have started properly")
+			return
+		}
+
+		// Foreground mode - run daemon directly
+		// Make this daemon process a process group leader
+		// This allows us to kill the daemon and all its children with one signal
+		if err := syscall.Setpgid(0, 0); err != nil {
+			log.Printf("Warning: failed to create process group: %v", err)
+		} else {
+			log.Printf("Daemon running in process group: %d", os.Getpid())
 		}
 
 		server, err := daemon.NewServer()
@@ -159,7 +186,7 @@ var daemonStartCmd = &cobra.Command{
 
 var daemonStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the daemon server",
+	Short: "Stop the local daemon",
 	Run: func(cmd *cobra.Command, args []string) {
 		if !daemon.IsRunning() {
 			fmt.Println("Daemon is not running")
@@ -194,7 +221,7 @@ var daemonStopCmd = &cobra.Command{
 
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Check daemon status",
+	Short: "Check local daemon status",
 	Run: func(cmd *cobra.Command, args []string) {
 		if daemon.IsRunning() {
 			fmt.Println("Daemon is running")
@@ -204,20 +231,6 @@ var daemonStatusCmd = &cobra.Command{
 		} else {
 			fmt.Println("Daemon is not running")
 		}
-	},
-}
-
-var daemonMetricsCmd = &cobra.Command{
-	Use:   "metrics",
-	Short: "Show async task queue metrics",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if !daemon.IsRunning() {
-			return fmt.Errorf("daemon is not running")
-		}
-		if err := cli.ShowToolTaskMetrics(); err != nil {
-			return err
-		}
-		return nil
 	},
 }
 
@@ -922,10 +935,12 @@ func init() {
 	secretCmd.AddCommand(secretListCmd)
 	secretCmd.AddCommand(secretStatusCmd)
 
+	// Daemon start flags
+	daemonStartCmd.Flags().Bool("foreground", false, "Run daemon in foreground (blocks terminal)")
+
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
-	daemonCmd.AddCommand(daemonMetricsCmd)
 	daemonCmd.AddCommand(daemonAddCmd)
 	daemonCmd.AddCommand(daemonListCmd)
 	daemonCmd.AddCommand(daemonRemoveCmd)
