@@ -218,7 +218,7 @@ func BootstrapAgent(name, description string, noStart bool) error {
 	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+			return fmt.Errorf("daemon is not running. Start it with: op daemon start")
 		}
 		return err
 	}
@@ -311,7 +311,7 @@ func StopAllAgents() error {
 	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+			return fmt.Errorf("daemon is not running. Start it with: op daemon start")
 		}
 		return err
 	}
@@ -328,7 +328,7 @@ func ReloadConfig() error {
 	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+			return fmt.Errorf("daemon is not running. Start it with: op daemon start")
 		}
 		return err
 	}
@@ -425,7 +425,7 @@ func ShowToolTaskMetrics() error {
 	client, err := ipc.NewClientFromRegistry("local")
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: ./opperator daemon")
+			return fmt.Errorf("daemon is not running. Start it with: op daemon start")
 		}
 		return err
 	}

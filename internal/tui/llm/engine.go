@@ -208,7 +208,7 @@ func (e *Engine) Request(adapter Adapter) (tea.Cmd, context.CancelFunc, chan tea
 			close(ch)
 			cancel()
 			if errors.Is(err, keyring.ErrNotFound) {
-				return StreamStartedMsg{Err: fmt.Errorf("Opper API key is not configured. Run `./opperator secret create --name=%s` to store one", keyring.OpperAPIKeyName)}
+				return StreamStartedMsg{Err: fmt.Errorf("Opper API key is not configured. Run `op secret create %s` to store one", keyring.OpperAPIKeyName)}
 			}
 			return StreamStartedMsg{Err: fmt.Errorf("failed to read Opper API key: %w", err)}
 		}

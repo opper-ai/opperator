@@ -231,7 +231,7 @@ func runLocalAgentToolProgressive(ctx context.Context, arguments string, progres
 	apiKey, err := keyring.GetAPIKey()
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
-			return fmt.Sprintf("error: Opper API key is not configured. Run `./opperator secret create --name=%s` to store one", keyring.OpperAPIKeyName), ""
+			return fmt.Sprintf("error: Opper API key is not configured. Run `op secret create %s` to store one", keyring.OpperAPIKeyName), ""
 		}
 		return fmt.Sprintf("error: failed to read Opper API key: %v", err), ""
 	}

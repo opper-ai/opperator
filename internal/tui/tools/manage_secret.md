@@ -22,7 +22,7 @@ Behavior
 - The tool must render an inline form with a single masked text input that
   autofocuses when `mode` is `create` or `update`.
 - Submission sends the value back to the daemon, which persists it using the
-  existing secrets API (`./opperator secret ...`).
+  existing secrets API (`op secret ...`).
 - On success, the view transitions to a confirmation card summarizing the
   action (`created`, `updated`, or `deleted`) without exposing the secret.
 - On failure, the tool displays the error message and keeps the value in memory

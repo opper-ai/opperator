@@ -46,7 +46,7 @@ var rootCmd = &cobra.Command{
 			fmt.Printf("Daemon is not running. Starting services...\n")
 			if err := onboarding.StartServices(); err != nil {
 				fmt.Printf("Failed to start services: %v\n", err)
-				fmt.Println("Try running: ./opperator daemon")
+				fmt.Println("Try running: op daemon start")
 				os.Exit(1)
 			}
 			fmt.Println("Services started successfully!")
@@ -75,7 +75,7 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		if !hasKey {
-			fmt.Fprintf(os.Stderr, "Opper API key is not configured. Run `./opperator secret create %s` to add one.\n", credentials.OpperAPIKeyName)
+			fmt.Fprintf(os.Stderr, "Opper API key is not configured. Run `op secret create %s` to add one.\n", credentials.OpperAPIKeyName)
 			os.Exit(1)
 		}
 
