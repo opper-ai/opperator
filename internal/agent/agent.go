@@ -58,6 +58,9 @@ type Agent struct {
 
 	// Early exit detection for startup stability check
 	earlyExitChan chan error
+
+	// Last invocation directory for change detection (where user runs 'op' from)
+	lastInvocationDir string
 }
 
 // MetadataUpdate captures the user-facing metadata for an agent.
@@ -563,6 +566,45 @@ func (a *Agent) SendLifecycleEvent(eventType string, data map[string]interface{}
 	}
 
 	return pro.SendLifecycleEvent(eventType, data)
+}
+
+// CheckAndNotifyInvocationDirChange checks if the invocation directory has changed and notifies the agent
+func (a *Agent) CheckAndNotifyInvocationDirChange(newInvocationDir string) error {
+	trimmed := strings.TrimSpace(newInvocationDir)
+	if trimmed == "" {
+		return nil
+	}
+
+	// Get absolute path for comparison
+	absPath, err := filepath.Abs(trimmed)
+	if err != nil {
+		absPath = trimmed
+	}
+
+	a.mu.Lock()
+	oldPath := a.lastInvocationDir
+
+	// If this is the first invocation directory, just store it
+	if oldPath == "" {
+		a.lastInvocationDir = absPath
+		a.mu.Unlock()
+		return nil
+	}
+
+	// Check if directory changed
+	if oldPath != absPath {
+		a.lastInvocationDir = absPath
+		a.mu.Unlock()
+
+		// Send lifecycle event
+		return a.SendLifecycleEvent("invocation_directory_changed", map[string]interface{}{
+			"old_path": oldPath,
+			"new_path": absPath,
+		})
+	}
+
+	a.mu.Unlock()
+	return nil
 }
 
 func (a *Agent) SystemPrompt() string {

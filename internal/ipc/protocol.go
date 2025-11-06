@@ -33,11 +33,13 @@ const (
 	RequestWatchAgentState   RequestType = "watch_agent_state"
 	RequestWatchAllTasks     RequestType = "watch_all_tasks"
 	RequestLifecycleEvent    RequestType = "lifecycle_event"
-	RequestGetAgentConfig    RequestType = "get_agent_config"
-	RequestBootstrapAgent    RequestType = "bootstrap_agent"
-	RequestDeleteAgent       RequestType = "delete_agent"
-	RequestReceiveAgent      RequestType = "receive_agent"
-	RequestPackageAgent      RequestType = "package_agent"
+	RequestGetAgentConfig      RequestType = "get_agent_config"
+	RequestBootstrapAgent      RequestType = "bootstrap_agent"
+	RequestDeleteAgent         RequestType = "delete_agent"
+	RequestReceiveAgent        RequestType = "receive_agent"
+	RequestPackageAgent        RequestType = "package_agent"
+	RequestSetInvocationDir    RequestType = "set_invocation_dir"
+	RequestGetInvocationDir    RequestType = "get_invocation_dir"
 )
 
 type Request struct {
@@ -69,20 +71,21 @@ type Request struct {
 }
 
 type Response struct {
-	Success     bool                         `json:"success"`
-	Error       string                       `json:"error,omitempty"`
-	Processes   []*ProcessInfo               `json:"processes,omitempty"`
-	Logs        []string                     `json:"logs,omitempty"`
-	Command     *CommandResponse             `json:"command,omitempty"`
-	Commands    []protocol.CommandDescriptor `json:"commands,omitempty"`
-	Task        *ToolTask                    `json:"task,omitempty"`
-	Tasks       []*ToolTask                  `json:"tasks,omitempty"`
-	Secret      string                       `json:"secret,omitempty"`
-	Secrets     []string                     `json:"secrets,omitempty"`
-	Metrics      *ToolTaskMetrics             `json:"metrics,omitempty"`
-	Sections     interface{}                  `json:"sections,omitempty"`
-	ProcessRoot  string                       `json:"process_root,omitempty"`
-	AgentPackage *agent.AgentPackage          `json:"agent_package,omitempty"`
+	Success        bool                         `json:"success"`
+	Error          string                       `json:"error,omitempty"`
+	Processes      []*ProcessInfo               `json:"processes,omitempty"`
+	Logs           []string                     `json:"logs,omitempty"`
+	Command        *CommandResponse             `json:"command,omitempty"`
+	Commands       []protocol.CommandDescriptor `json:"commands,omitempty"`
+	Task           *ToolTask                    `json:"task,omitempty"`
+	Tasks          []*ToolTask                  `json:"tasks,omitempty"`
+	Secret         string                       `json:"secret,omitempty"`
+	Secrets        []string                     `json:"secrets,omitempty"`
+	Metrics        *ToolTaskMetrics             `json:"metrics,omitempty"`
+	Sections       interface{}                  `json:"sections,omitempty"`
+	ProcessRoot    string                       `json:"process_root,omitempty"`
+	AgentPackage   *agent.AgentPackage          `json:"agent_package,omitempty"`
+	InvocationDir  string                       `json:"invocation_dir,omitempty"`
 }
 
 type ToolTaskMetrics struct {

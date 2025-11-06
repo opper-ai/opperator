@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"opperator/internal/agent"
@@ -29,14 +30,16 @@ import (
 )
 
 type Server struct {
-	manager     *agent.Manager
-	tasks       *taskqueue.Manager
-	listener    net.Listener
-	lock        *processLock
-	db          *sql.DB
-	stateBroker *Broker[AgentStateChange]
-	taskBroker  *Broker[TaskEvent]
-	logFile     *os.File
+	manager            *agent.Manager
+	tasks              *taskqueue.Manager
+	listener           net.Listener
+	lock               *processLock
+	db                 *sql.DB
+	stateBroker        *Broker[AgentStateChange]
+	taskBroker         *Broker[TaskEvent]
+	logFile            *os.File
+	lastInvocationDir  string
+	invocationDirMutex sync.RWMutex
 }
 
 func NewServer() (*Server, error) {
@@ -555,6 +558,8 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 		if err := s.manager.StartAgent(req.AgentName); err != nil {
 			return ipc.Response{Success: false, Error: err.Error()}
 		}
+		// Send current invocation directory to newly started agent
+		s.sendInvocationDirToAgent(req.AgentName)
 		return ipc.Response{Success: true}
 	case ipc.RequestStopAgent:
 		if err := s.manager.StopAgent(req.AgentName); err != nil {
@@ -565,6 +570,8 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 		if err := s.manager.RestartAgent(req.AgentName); err != nil {
 			return ipc.Response{Success: false, Error: err.Error()}
 		}
+		// Send current invocation directory to restarted agent
+		s.sendInvocationDirToAgent(req.AgentName)
 		return ipc.Response{Success: true}
 	case ipc.RequestStopAll:
 		if err := s.manager.StopAll(); err != nil {
@@ -594,6 +601,10 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 	case ipc.RequestCommand:
 		if req.Command == "" {
 			return ipc.Response{Success: false, Error: "command is required"}
+		}
+		// Store invocation directory for future agent starts
+		if req.WorkingDir != "" {
+			s.setInvocationDir(req.WorkingDir)
 		}
 		resp, err := s.manager.InvokeCommand(req.AgentName, req.Command, req.Args, req.WorkingDir, 10*time.Second)
 		if err != nil {
@@ -630,6 +641,10 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 	case ipc.RequestSubmitToolTask:
 		if s.tasks == nil {
 			return ipc.Response{Success: false, Error: "tool task manager unavailable"}
+		}
+		// Store invocation directory for future agent starts
+		if req.WorkingDir != "" {
+			s.setInvocationDir(req.WorkingDir)
 		}
 		task, err := s.tasks.Submit(context.Background(), taskqueue.SubmitRequest{
 			ToolName:    req.ToolName,
@@ -719,6 +734,18 @@ func (s *Server) processRequest(req ipc.Request) ipc.Response {
 		return s.receiveAgent(req)
 	case ipc.RequestPackageAgent:
 		return s.packageAgent(req)
+	case ipc.RequestSetInvocationDir:
+		if req.WorkingDir != "" {
+			s.setInvocationDir(req.WorkingDir)
+		}
+		return ipc.Response{Success: true}
+
+	case ipc.RequestGetInvocationDir:
+		s.invocationDirMutex.RLock()
+		invocationDir := s.lastInvocationDir
+		s.invocationDirMutex.RUnlock()
+		return ipc.Response{Success: true, InvocationDir: invocationDir}
+
 	default:
 		return ipc.Response{Success: false, Error: fmt.Sprintf("unknown request type: %q", req.Type)}
 	}
@@ -1368,6 +1395,51 @@ func (s *Server) startPreviouslyRunningAgents() {
 			log.Printf("Failed to auto-start agent %s: %v", agentName, err)
 		} else {
 			log.Printf("Auto-started agent: %s", agentName)
+			// Send invocation directory to auto-started agent
+			s.sendInvocationDirToAgent(agentName)
 		}
 	}
+}
+
+// setInvocationDir stores the invocation directory and notifies all running agents
+func (s *Server) setInvocationDir(dir string) {
+	s.invocationDirMutex.Lock()
+	oldDir := s.lastInvocationDir
+	newDir := strings.TrimSpace(dir)
+	s.lastInvocationDir = newDir
+	s.invocationDirMutex.Unlock()
+
+	// If the directory changed, notify all running agents
+	if oldDir != newDir {
+		agents := s.manager.GetAllAgents()
+		for _, ag := range agents {
+			if ag.GetStatus() == agent.StatusRunning {
+				_ = ag.SendLifecycleEvent("invocation_directory_changed", map[string]interface{}{
+					"old_path": oldDir,
+					"new_path": newDir,
+				})
+			}
+		}
+	}
+}
+
+// sendInvocationDirToAgent sends the current invocation directory to an agent
+func (s *Server) sendInvocationDirToAgent(agentName string) {
+	s.invocationDirMutex.RLock()
+	invocationDir := s.lastInvocationDir
+	s.invocationDirMutex.RUnlock()
+
+	if invocationDir == "" {
+		return
+	}
+
+	ag, err := s.manager.GetAgent(agentName)
+	if err != nil {
+		return
+	}
+
+	_ = ag.SendLifecycleEvent("invocation_directory_changed", map[string]interface{}{
+		"old_path": "",
+		"new_path": invocationDir,
+	})
 }

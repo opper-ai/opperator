@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
@@ -271,5 +272,42 @@ func (m *Model) checkForUpdatesCmd() tea.Cmd {
 			return updateCheckMsg{available: false, err: err}
 		}
 		return updateCheckMsg{available: info.Available, err: nil}
+	}
+}
+
+func (m *Model) notifyAgentsOfInvocationDirCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Get the invocation directory
+		invocationDir := strings.TrimSpace(m.userWorkingDir)
+		if invocationDir == "" {
+			return nil
+		}
+
+		// Send invocation directory to daemon first
+		payload := map[string]interface{}{
+			"type":        "set_invocation_dir",
+			"working_dir": invocationDir,
+		}
+		resp, err := tooling.IPCRequestToDaemon(context.Background(), "local", payload)
+		if err != nil {
+			// Log error but don't fail - TUI should continue even if this fails
+			// TODO: Consider showing a warning to user in debug mode
+			_ = err
+		}
+		_ = resp
+
+		// Then notify all currently running agents directly
+		if m.agentStatuses != nil {
+			for agentName := range m.agentStatuses {
+				if strings.TrimSpace(agentName) != "" {
+					tooling.SendLifecycleEvent(agentName, "invocation_directory_changed", map[string]interface{}{
+						"old_path": "",
+						"new_path": invocationDir,
+					})
+				}
+			}
+		}
+
+		return nil
 	}
 }

@@ -3,7 +3,9 @@
 import copy
 import json
 import os
+import socket
 import sys
+import tempfile
 import threading
 import traceback
 from abc import ABC, abstractmethod
@@ -24,6 +26,39 @@ from .protocol import (
 )
 from . import secrets as secret_client
 from .lifecycle import LifecycleManager
+
+
+def _fetch_invocation_directory_from_daemon(timeout: float = 2.0) -> Optional[str]:
+    """Fetch the current invocation directory from the daemon.
+
+    Returns None if unable to fetch (daemon not available, etc.)
+    """
+    socket_path = os.environ.get("OPPERATOR_SOCKET_PATH")
+    if not socket_path:
+        socket_path = os.path.join(tempfile.gettempdir(), "opperator.sock")
+
+    payload = {"type": "get_invocation_dir"}
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(socket_path)
+            raw = json.dumps(payload).encode("utf-8") + b"\n"
+            sock.sendall(raw)
+
+            # Read response
+            with sock.makefile("r", encoding="utf-8") as reader:
+                line = reader.readline()
+                if not line:
+                    return None
+
+                response = json.loads(line)
+                if response.get("success") and response.get("invocation_dir"):
+                    return response["invocation_dir"]
+                return None
+    except (OSError, json.JSONDecodeError, KeyError):
+        # Silently fail - invocation directory is optional at startup
+        return None
 
 
 class OpperatorAgent(ABC):
@@ -53,7 +88,7 @@ class OpperatorAgent(ABC):
         self._message_thread: Optional[threading.Thread] = None
         self._stop_reading = threading.Event()
         self._command_state = threading.local()
-        self._invocation_working_dir: Optional[str] = None
+        self._invocation_dir: Optional[str] = None
         self._max_async_workers = (
             max_async_workers if (max_async_workers or 0) > 0 else None
         )
@@ -296,13 +331,13 @@ class OpperatorAgent(ABC):
             self._handle_lifecycle_event(event)
 
     def _handle_command(self, cmd: CommandMessage):
-        # Safely retrieve working_dir, as CommandMessage definition might be outdated.
-        working_dir = self._resolve_working_dir(getattr(cmd, "working_dir", None))
-        if working_dir:
-            self._invocation_working_dir = working_dir
+        # Safely retrieve invocation_dir (where user ran 'op' from)
+        invocation_dir = self._resolve_invocation_dir(getattr(cmd, "working_dir", None))
+        if invocation_dir:
+            self._invocation_dir = invocation_dir
 
         if cmd.command == "__list_commands":
-            self._set_command_context(cmd.id, working_dir)
+            self._set_command_context(cmd.id, invocation_dir)
             try:
                 commands = [
                     definition.to_dict() for definition in self._command_definitions()
@@ -333,22 +368,22 @@ class OpperatorAgent(ABC):
 
         async_enabled = bool(definition.async_enabled) if definition else False
         if async_enabled:
-            self._submit_async_command(cmd, handler, prepared_args, working_dir)
+            self._submit_async_command(cmd, handler, prepared_args, invocation_dir)
             return
 
-        self._execute_command(cmd, handler, prepared_args, working_dir)
+        self._execute_command(cmd, handler, prepared_args, invocation_dir)
 
     def _submit_async_command(
         self,
         cmd: CommandMessage,
         handler: Callable[[Dict[str, Any]], Any],
         prepared_args: Dict[str, Any],
-        working_dir: Optional[str],
+        invocation_dir: Optional[str],
     ) -> None:
         try:
             executor = self._ensure_async_executor()
             executor.submit(
-                self._execute_command, cmd, handler, prepared_args, working_dir
+                self._execute_command, cmd, handler, prepared_args, invocation_dir
             )
         except Exception as exc:  # pragma: no cover - defensive guard
             self.log(
@@ -363,9 +398,9 @@ class OpperatorAgent(ABC):
         cmd: CommandMessage,
         handler: Callable[[Dict[str, Any]], Any],
         prepared_args: Dict[str, Any],
-        working_dir: Optional[str],
+        invocation_dir: Optional[str],
     ) -> None:
-        self._set_command_context(cmd.id, working_dir)
+        self._set_command_context(cmd.id, invocation_dir)
         try:
             result = handler(prepared_args)
         except Exception as exc:  # pragma: no cover - handler-specific failures
@@ -377,14 +412,14 @@ class OpperatorAgent(ABC):
             self._clear_command_context()
 
     def _set_command_context(
-        self, command_id: Optional[str], working_dir: Optional[str]
+        self, command_id: Optional[str], invocation_dir: Optional[str]
     ) -> None:
         setattr(self._command_state, "command_id", command_id)
-        setattr(self._command_state, "working_directory", working_dir)
+        setattr(self._command_state, "invocation_directory", invocation_dir)
 
     def _clear_command_context(self) -> None:
         setattr(self._command_state, "command_id", None)
-        setattr(self._command_state, "working_directory", None)
+        setattr(self._command_state, "invocation_directory", None)
 
     def _ensure_async_executor(self) -> ThreadPoolExecutor:
         if self._async_executor is not None:
@@ -418,8 +453,9 @@ class OpperatorAgent(ABC):
             self._async_executor.shutdown(wait=False)
             self._async_executor = None
 
-    def _resolve_working_dir(self, raw_value: Optional[str]) -> Optional[str]:
-        candidate = raw_value if raw_value else self._invocation_working_dir
+    def _resolve_invocation_dir(self, raw_value: Optional[str]) -> Optional[str]:
+        """Resolve the invocation directory (where user ran 'op' from)"""
+        candidate = raw_value if raw_value else self._invocation_dir
         if not candidate:
             return None
         try:
@@ -428,12 +464,31 @@ class OpperatorAgent(ABC):
         except (OSError, TypeError, ValueError):
             return None
 
+    def get_invocation_directory(self) -> Optional[str]:
+        """Get the directory where the user invoked 'op' or 'opperator' from.
+
+        This returns the user's current working directory when they ran the op command,
+        NOT the directory where the agent process is running.
+
+        Returns:
+            The invocation directory path, or None if not set yet
+        """
+        invocation_dir = getattr(self._command_state, "invocation_directory", None)
+        if invocation_dir:
+            return invocation_dir
+        if self._invocation_dir:
+            return self._invocation_dir
+        return None
+
     def get_working_directory(self) -> str:
-        working_dir = getattr(self._command_state, "working_directory", None)
-        if working_dir:
-            return working_dir
-        if self._invocation_working_dir:
-            return self._invocation_working_dir
+        """Get the directory where the agent process is running.
+
+        This is the agent's working directory (e.g., ~/.config/opperator/agents/my-agent),
+        NOT where the user invoked the 'op' command from.
+
+        Returns:
+            The agent's process working directory
+        """
         return os.path.abspath(os.getcwd())
 
     def _prepare_command_arguments(
@@ -662,10 +717,15 @@ class OpperatorAgent(ABC):
                 )
             elif event_type == "agent_deactivated":
                 self.on_agent_deactivated(data.get("next_agent"))
-            elif event_type == "working_directory_changed":
-                self.on_working_directory_changed(
+            elif event_type == "invocation_directory_changed":
+                # Store the new invocation directory
+                new_path = data.get("new_path", "")
+                if new_path:
+                    self._invocation_dir = new_path
+                # Call the hook
+                self.on_invocation_directory_changed(
                     data.get("old_path", ""),
-                    data.get("new_path", "")
+                    new_path
                 )
         except Exception as exc:
             self.log(LogLevel.ERROR, f"Lifecycle event handler failed: {exc}")
@@ -675,6 +735,11 @@ class OpperatorAgent(ABC):
         try:
             # Setup signal handlers
             self.lifecycle.setup_signal_handlers()
+
+            # Fetch initial invocation directory from daemon
+            initial_invocation_dir = _fetch_invocation_directory_from_daemon()
+            if initial_invocation_dir:
+                self._invocation_dir = initial_invocation_dir
 
             # Load initial configuration
             self.load_config()
@@ -809,11 +874,15 @@ class OpperatorAgent(ABC):
         """
         pass
 
-    def on_working_directory_changed(self, old_path: str, new_path: str):
-        """Called when the working directory changes
+    def on_invocation_directory_changed(self, old_path: str, new_path: str):
+        """Called when the invocation directory changes.
+
+        This is triggered when the user runs 'op' or 'opperator' from a different directory.
+        The invocation directory is where the user runs the command from, NOT where the
+        agent process is running.
 
         Args:
-            old_path: Previous working directory
-            new_path: New working directory
+            old_path: Previous invocation directory (empty string on first notification)
+            new_path: New invocation directory
         """
         pass

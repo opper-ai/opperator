@@ -475,6 +475,9 @@ func (m *Model) Init() tea.Cmd {
 	// Check for updates in the background
 	cmds = append(cmds, m.checkForUpdatesCmd())
 
+	// Notify all agents of the current invocation directory
+	cmds = append(cmds, m.notifyAgentsOfInvocationDirCmd())
+
 	// Fetch initial data based on core agent mode
 	if m.sidebar != nil {
 		coreID := m.currentCoreAgentID()

@@ -176,6 +176,12 @@ func (m *Manager) InvokeCommand(name, command string, args map[string]interface{
 		return nil, err
 	}
 
+	// Check and notify invocation directory changes
+	if err := agent.CheckAndNotifyInvocationDirChange(workingDir); err != nil {
+		// Log the error but don't fail the command
+		log.Printf("Failed to notify invocation directory change for agent %s: %v", name, err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -191,6 +197,12 @@ func (m *Manager) InvokeCommandAsync(name, command string, args map[string]inter
 	agent, err := m.GetAgent(name)
 	if err != nil {
 		return nil, err
+	}
+
+	// Check and notify invocation directory changes
+	if err := agent.CheckAndNotifyInvocationDirChange(workingDir); err != nil {
+		// Log the error but don't fail the command
+		log.Printf("Failed to notify invocation directory change for agent %s: %v", name, err)
 	}
 
 	var ctx context.Context
