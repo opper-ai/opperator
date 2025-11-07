@@ -104,8 +104,8 @@ func (p *Provisioner) Close() error {
 
 // Provision sets up the opperator daemon on the remote server
 func (p *Provisioner) Provision(ctx context.Context, authToken string) error {
-	// Step 1: Create user and directories
-	if err := p.runCommand("useradd -m -s /bin/bash opperator || true"); err != nil {
+	// Step 1: Create user with home directory at /var/lib/opperator
+	if err := p.runCommand("useradd -d /var/lib/opperator -m -s /bin/bash opperator || true"); err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
 
@@ -321,8 +321,8 @@ printf "\n\n" | gnome-keyring-daemon --unlock --components=secrets --daemonize 2
 # Wait a moment for daemon to be ready
 sleep 0.5
 
-# Start the actual Opperator daemon
-exec /opt/opperator/opperator daemon start
+# Start the actual Opperator daemon in foreground mode
+exec /opt/opperator/opperator daemon start --foreground
 `
 
 	// Upload wrapper script
