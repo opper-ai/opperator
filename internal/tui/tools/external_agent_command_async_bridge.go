@@ -13,5 +13,7 @@ func registerExternalAgentCommandAsyncRenderer(def externalAgentCommandDef) {
 	if label == "" {
 		label = "Async"
 	}
-	toolregistry.Register(def.ToolName, AsyncToolDefinition(label))
+	asyncDef := AsyncToolDefinition(label)
+	asyncDef.Hidden = def.Hidden
+	toolregistry.Register(def.ToolName, asyncDef)
 }

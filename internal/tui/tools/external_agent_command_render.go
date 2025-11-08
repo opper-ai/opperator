@@ -36,7 +36,8 @@ func registerExternalAgentCommandRenderer(def externalAgentCommandDef) {
 	}
 
 	toolregistry.Register(def.ToolName, toolregistry.Definition{
-		Label: def.Label,
+		Label:  def.Label,
+		Hidden: def.Hidden,
 		Pending: func(call tooltypes.Call, width int, spinner string) string {
 			return renderAgentCommandPending(def, width, spinner)
 		},

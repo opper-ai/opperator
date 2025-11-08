@@ -275,6 +275,7 @@ class CommandDefinition:
     arguments: Optional[Sequence[CommandArgument]] = None
     async_enabled: bool = False
     progress_label: Optional[str] = None
+    hidden: bool = False
 
     def normalized(self) -> 'CommandDefinition':
         name = str(self.name).strip()
@@ -319,6 +320,7 @@ class CommandDefinition:
 
         async_enabled = bool(self.async_enabled)
         progress_label = (self.progress_label or '').strip() or None
+        hidden = bool(self.hidden)
 
         return replace(
             self,
@@ -332,6 +334,7 @@ class CommandDefinition:
             arguments=arguments,
             async_enabled=async_enabled,
             progress_label=progress_label,
+            hidden=hidden,
         )
 
     @staticmethod
@@ -418,6 +421,8 @@ class CommandDefinition:
             data["async"] = True
         if normalized.progress_label:
             data["progress_label"] = normalized.progress_label
+        if normalized.hidden:
+            data["hidden"] = True
         return data
 
     @staticmethod

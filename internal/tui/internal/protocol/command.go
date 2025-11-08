@@ -33,6 +33,7 @@ type CommandDescriptor struct {
 	Arguments        []CommandArgument `json:"arguments,omitempty"`
 	Async            bool              `json:"async,omitempty"`
 	ProgressLabel    string            `json:"progress_label,omitempty"`
+	Hidden           bool              `json:"hidden,omitempty"`
 }
 
 type CommandArgument struct {

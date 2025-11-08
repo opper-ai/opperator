@@ -122,6 +122,7 @@ class OpperatorAgent(ABC):
         arguments: Optional[Sequence[Union[CommandArgument, Dict[str, Any]]]] = None,
         async_enabled: bool = False,
         progress_label: Optional[str] = None,
+        hidden: bool = False,
     ):
         """Register a command handler."""
 
@@ -143,6 +144,7 @@ class OpperatorAgent(ABC):
             arguments=arguments,
             async_enabled=async_enabled,
             progress_label=progress_label,
+            hidden=hidden,
         )
 
         normalized_definition = definition.normalized()

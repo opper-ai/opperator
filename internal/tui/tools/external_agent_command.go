@@ -26,6 +26,7 @@ type ExternalAgentCommandTarget struct {
 	Arguments     []protocol.CommandArgument
 	Async         bool
 	ProgressLabel string
+	Hidden        bool
 }
 
 type externalAgentCommandDef struct {
@@ -36,6 +37,7 @@ type externalAgentCommandDef struct {
 	Arguments     []protocol.CommandArgument
 	Async         bool
 	ProgressLabel string
+	Hidden        bool
 }
 
 var (
@@ -102,6 +104,7 @@ func BuildAgentCommandTools(agent string, commands []protocol.CommandDescriptor)
 			Arguments:     cmd.Arguments,
 			Async:         cmd.Async,
 			ProgressLabel: strings.TrimSpace(cmd.ProgressLabel),
+			Hidden:        cmd.Hidden,
 		})
 
 		description := strings.TrimSpace(cmd.Description)
@@ -145,6 +148,7 @@ func setAgentCommandRegistry(defs []externalAgentCommandDef) {
 			Arguments:     def.Arguments,
 			Async:         def.Async,
 			ProgressLabel: def.ProgressLabel,
+			Hidden:        def.Hidden,
 		}
 	}
 }
