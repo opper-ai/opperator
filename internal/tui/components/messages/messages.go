@@ -42,10 +42,12 @@ type Messages struct {
 	assistantID           string
 	toolStore             *toolstate.Store
 	toolIndex             map[string]int
+	waitingForAssistant   bool
+	activeHiddenLoads     map[string]struct{}
 
-	cache     *ViewportCache
-	renderer  *LayoutRenderer
-	animator  *AnimationTracker
+	cache       *ViewportCache
+	renderer    *LayoutRenderer
+	animator    *AnimationTracker
 	lastUserIdx int
 	screenTop   int
 }
@@ -62,24 +64,103 @@ func (c *Messages) markDirty(idx int) {
 	c.cache.MarkDirty(idx, len(c.items))
 }
 
+func (c *Messages) spinnerRequired(msg *messageCmp) bool {
+	if c.animator != nil && c.animator.HasVisibleToolAnimating(c.items) {
+		return false
+	}
+	hasContent := false
+	if msg != nil && strings.TrimSpace(msg.content()) != "" {
+		hasContent = true
+	}
+	if c.waitingForAssistant {
+		return true
+	}
+	if !hasContent && len(c.activeHiddenLoads) > 0 {
+		return true
+	}
+	return false
+}
+
+func (c *Messages) latestAssistant() (int, *messageCmp) {
+	for i := len(c.items) - 1; i >= 0; i-- {
+		if msg, ok := c.items[i].(*messageCmp); ok && msg.isAssistant() {
+			return i, msg
+		}
+	}
+	return -1, nil
+}
+
+func (c *Messages) syncAssistantSpinner() tea.Cmd {
+	idx, msg := c.latestAssistant()
+	if msg == nil {
+		return nil
+	}
+	shouldThink := c.spinnerRequired(msg)
+	if msg.thinking == shouldThink {
+		if shouldThink {
+			c.animator.Track(idx, msg)
+			return c.animator.InitializeItem(idx, msg)
+		}
+		return nil
+	}
+	msg.setThinking(shouldThink)
+	if shouldThink {
+		if c.conversationStartTime.IsZero() {
+			c.conversationStartTime = time.Now()
+		}
+		if msg.startedAt.IsZero() {
+			msg.startedAt = c.conversationStartTime
+		}
+	}
+	c.markDirty(idx)
+	c.animator.Track(idx, msg)
+	if shouldThink {
+		return c.animator.InitializeItem(idx, msg)
+	}
+	return nil
+}
+
+func (c *Messages) setHiddenToolLoading(id string, active bool) tea.Cmd {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	if c.activeHiddenLoads == nil {
+		c.activeHiddenLoads = make(map[string]struct{})
+	}
+	_, exists := c.activeHiddenLoads[id]
+	switch {
+	case active && !exists:
+		c.activeHiddenLoads[id] = struct{}{}
+	case !active && exists:
+		delete(c.activeHiddenLoads, id)
+	default:
+		return nil
+	}
+	return c.syncAssistantSpinner()
+}
+
+func (c *Messages) updateHiddenToolLoading(entry toolstate.Execution) tea.Cmd {
+	return c.setHiddenToolLoading(entry.Call.ID, !entry.Finished())
+}
+
+func (c *Messages) trackHiddenTool(entry toolstate.Execution) {
+	id := strings.TrimSpace(entry.Call.ID)
+	if id == "" {
+		return
+	}
+	if c.toolIndex == nil {
+		c.toolIndex = make(map[string]int)
+	}
+	c.toolIndex[id] = -1
+	if c.activeHiddenLoads == nil {
+		c.activeHiddenLoads = make(map[string]struct{})
+	}
+}
+
 func (c *Messages) appendItem(cmp MessageCmp) int {
 	if cmp == nil {
 		return -1
-	}
-	// Check if this is a hidden tool call
-	if toolCmp, ok := cmp.(ToolCallCmp); ok {
-		if def, hasDef := resolveToolDefinition(toolCmp.Entry()); hasDef && def.Hidden {
-			// Track the tool internally but don't display it
-			entry := toolCmp.Entry()
-			if id := strings.TrimSpace(entry.Call.ID); id != "" {
-				if c.toolIndex == nil {
-					c.toolIndex = make(map[string]int)
-				}
-				// Store -1 to indicate the tool is tracked but not displayed
-				c.toolIndex[id] = -1
-			}
-			return -1
-		}
 	}
 	cmp.SetSize(c.w, 0)
 	c.items = append(c.items, cmp)
@@ -151,7 +232,6 @@ func (c *Messages) findFocusableBackward(start int) (int, bool) {
 	return -1, false
 }
 
-
 func (c *Messages) initIfNeeded() {
 	if c.inited {
 		return
@@ -208,20 +288,35 @@ func (c *Messages) LoadConversation(msgs []message.Message) {
 }
 
 func (c *Messages) addToolEntry(entry toolstate.Execution) tea.Cmd {
+	if def, hasDef := resolveToolDefinition(entry); hasDef && def.Hidden {
+		c.trackHiddenTool(entry)
+		return c.updateHiddenToolLoading(entry)
+	}
 	cmp := NewToolCallCmp(entry)
 	idx := c.appendItem(cmp)
 	if idx >= 0 {
 		c.ensureVisibleIdx = idx
 	}
-	return c.animator.TrackAppendedItem(idx, cmp)
+	var cmds []tea.Cmd
+	if init := c.animator.TrackAppendedItem(idx, cmp); init != nil {
+		cmds = append(cmds, init)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func (c *Messages) addOrReplaceToolEntry(entry toolstate.Execution) tea.Cmd {
+	if def, hasDef := resolveToolDefinition(entry); hasDef && def.Hidden {
+		c.trackHiddenTool(entry)
+		return c.updateHiddenToolLoading(entry)
+	}
+	cmp := NewToolCallCmp(entry)
 	if len(c.items) > 0 {
 		if m, ok := c.items[len(c.items)-1].(*messageCmp); ok && m.isAssistant() {
 			content := strings.TrimSpace(m.content())
 			if content == "" {
-				cmp := NewToolCallCmp(entry)
 				cmp.SetSize(c.w, 0)
 				idx := len(c.items) - 1
 				c.items[idx] = cmp
@@ -232,7 +327,14 @@ func (c *Messages) addOrReplaceToolEntry(entry toolstate.Execution) tea.Cmd {
 				}
 				c.toolIndex[strings.TrimSpace(entry.Call.ID)] = idx
 				c.ensureVisibleIdx = idx
-				return c.animator.TrackAppendedItem(idx, cmp)
+				var cmds []tea.Cmd
+				if init := c.animator.TrackAppendedItem(idx, cmp); init != nil {
+					cmds = append(cmds, init)
+				}
+				if len(cmds) == 0 {
+					return nil
+				}
+				return tea.Batch(cmds...)
 			}
 		}
 	}
@@ -245,6 +347,12 @@ func (c *Messages) applyExistingToolEntry(entry toolstate.Execution, markDirty b
 		return nil
 	}
 	idx, ok := c.toolIndex[id]
+
+	// Check if this is a hidden tool (idx == -1)
+	if ok && idx == -1 {
+		return c.updateHiddenToolLoading(entry)
+	}
+
 	if !ok || idx < 0 || idx >= len(c.items) {
 		return c.addToolEntry(entry)
 	}
@@ -282,44 +390,20 @@ func (c *Messages) AddAssistantStart(model string) {
 	}
 }
 func (c *Messages) StartLoading() tea.Cmd {
-	if len(c.items) > 0 {
-		if m, ok := c.items[len(c.items)-1].(*messageCmp); ok && m.isAssistant() {
-			if strings.TrimSpace(m.content()) != "" {
-				return nil
-			}
-			if !m.thinking {
-				m.setThinking(true)
-			}
-			if c.conversationStartTime.IsZero() {
-				c.conversationStartTime = time.Now()
-			}
-			if m.startedAt.IsZero() {
-				m.startedAt = c.conversationStartTime
-			}
-			idx := len(c.items) - 1
-			c.markDirty(idx)
-			c.animator.Track(idx, m)
-			return m.Init()
-		}
+	if c.waitingForAssistant {
+		return nil
 	}
-	return nil
+	c.waitingForAssistant = true
+	return c.syncAssistantSpinner()
 }
 
 // StopLoading clears the thinking state on the latest assistant message.
-func (c *Messages) StopLoading() {
-	for idx := len(c.items) - 1; idx >= 0; idx-- {
-		m, ok := c.items[idx].(*messageCmp)
-		if !ok || !m.isAssistant() {
-			continue
-		}
-		if !m.thinking {
-			return
-		}
-		m.setThinking(false)
-		c.markDirty(idx)
-		c.animator.Track(idx, m)
-		return
+func (c *Messages) StopLoading() tea.Cmd {
+	if !c.waitingForAssistant {
+		return nil
 	}
+	c.waitingForAssistant = false
+	return c.syncAssistantSpinner()
 }
 
 // AppendAssistant appends text to the last assistant message; if absent, starts a new one.
@@ -501,27 +585,33 @@ func (c *Messages) FocusPrev() bool {
 }
 
 // stopThinking is false the spinner remains visible (e.g. while tools run).
-func (c *Messages) StreamStarted(stopThinking bool) {
-	if len(c.items) == 0 {
-		return
+func (c *Messages) StreamStarted(stopThinking bool) tea.Cmd {
+	_, msg := c.latestAssistant()
+	if msg == nil {
+		return nil
 	}
-	if m, ok := c.items[len(c.items)-1].(*messageCmp); ok && m.isAssistant() {
-		if stopThinking {
-			m.setThinking(false)
-		} else {
-			if strings.TrimSpace(m.content()) == "" {
-				m.setThinking(true)
-			} else {
-				m.setThinking(false)
-			}
+	if stopThinking {
+		needsSync := false
+		if c.waitingForAssistant {
+			c.waitingForAssistant = false
+			needsSync = true
 		}
-		if m.startedAt.IsZero() {
-			m.markStarted()
+		if msg.startedAt.IsZero() {
+			msg.markStarted()
 		}
-		idx := len(c.items) - 1
-		c.markDirty(idx)
-		c.animator.Track(idx, m)
+		if needsSync {
+			return c.syncAssistantSpinner()
+		}
+		return nil
 	}
+	if strings.TrimSpace(msg.content()) == "" {
+		if c.waitingForAssistant {
+			return nil
+		}
+		c.waitingForAssistant = true
+		return c.syncAssistantSpinner()
+	}
+	return nil
 }
 
 func (c *Messages) Update(msg tea.Msg) tea.Cmd {

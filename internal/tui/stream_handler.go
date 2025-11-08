@@ -222,8 +222,7 @@ func (m *Model) restorePendingAssistant() tea.Cmd {
 	if state.waiting {
 		return m.messages.StartLoading()
 	}
-	m.messages.StreamStarted(true)
-	return nil
+	return m.messages.StreamStarted(true)
 }
 
 // ============================================================================
@@ -250,14 +249,18 @@ func (m *Model) handleStreamMsg(sessionID string, msg tea.Msg) tea.Cmd {
 		}
 		return m.nextStreamCmd()
 	case llm.StreamDeltaMsg:
+		var cmds []tea.Cmd
 		if v.Text != "" {
 			m.recordPendingAssistantContent(sessionID, v.Text)
 			if sessionID == m.sessionID {
-				m.messages.StreamStarted(true)
+				if cmd := m.messages.StreamStarted(true); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 				m.messages.AppendAssistant(v.Text)
 			}
 		}
-		return m.nextStreamCmd()
+		cmds = append(cmds, m.nextStreamCmd())
+		return batchCmds(cmds)
 	case llm.StreamDoneMsg:
 		if v.Err != nil {
 			var errText string
@@ -274,6 +277,11 @@ func (m *Model) handleStreamMsg(sessionID string, msg tea.Msg) tea.Cmd {
 			}
 		}
 		var cmds []tea.Cmd
+		if sessionID == m.sessionID {
+			if cmd := m.messages.StopLoading(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if cmd := m.completeResponse(sessionID); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -284,11 +292,14 @@ func (m *Model) handleStreamMsg(sessionID string, msg tea.Msg) tea.Cmd {
 		m.trackPendingToolCall(sessionID, v.Call)
 		var cmds []tea.Cmd
 		if sessionID == m.sessionID {
-			if cmd := m.messages.StartLoading(); cmd != nil {
+			if cmd := m.messages.StreamStarted(false); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			m.messages.StreamStarted(false)
 			if cmd := m.messages.EnsureToolCall(v.Call); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Call StartLoading AFTER EnsureToolCall so hidden tools are tracked
+			if cmd := m.messages.StartLoading(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			if cmd := m.refreshToolDetail(v.Call.ID); cmd != nil {
@@ -299,16 +310,20 @@ func (m *Model) handleStreamMsg(sessionID string, msg tea.Msg) tea.Cmd {
 		return batchCmds(cmds)
 	case llm.ToolUseFinishMsg:
 		m.clearPendingToolCall(sessionID, v.Result.ToolCallID)
+		var cmds []tea.Cmd
 		if sessionID == m.sessionID {
 			m.messages.FinishTool(v.Result.ToolCallID, v.Result)
 			if !m.hasPendingToolCalls(sessionID) {
-				m.messages.StopLoading()
+				if cmd := m.messages.StopLoading(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			if cmd := m.refreshToolDetail(v.Result.ToolCallID); cmd != nil {
-				return tea.Batch(cmd, m.nextStreamCmd())
+				cmds = append(cmds, cmd)
 			}
 		}
-		return m.nextStreamCmd()
+		cmds = append(cmds, m.nextStreamCmd())
+		return batchCmds(cmds)
 	case llm.ToolUseDeltaMsg:
 		if sessionID == m.sessionID {
 			m.messages.UpdateToolDelta(v.ID, v.Name, v.Delta)

@@ -46,7 +46,8 @@ type messageCmp struct {
 	finishedAt time.Time
 	duration   time.Duration
 
-	anim *anim.Anim
+	anim         *anim.Anim
+	animSettings anim.Settings
 
 	// selection state
 	selection SelectionState
@@ -90,23 +91,26 @@ func newMessageCmp(role message.Role, content string, width int, focused bool) *
 		"Patience...",
 	}
 
+	settings := anim.Settings{
+		Label:           thinkingTexts[time.Now().UnixNano()%int64(len(thinkingTexts))],
+		Size:            20,
+		LabelColor:      t.FgBase,
+		GradColorA:      t.Primary,
+		GradColorB:      t.Secondary,
+		CycleColors:     true,
+		BuildLabel:      true,
+		BuildInterval:   50 * time.Millisecond,
+		BuildDelay:      300 * time.Millisecond,
+		ShufflePrelude:  1500 * time.Millisecond,
+		ShowEllipsis:    false,
+		CycleReveal:     true,
+		DisplayDuration: 4 * time.Second,
+	}
+
 	cmp := &messageCmp{
-		msg: m,
-		anim: anim.New(anim.Settings{
-			Label:           thinkingTexts[time.Now().UnixNano()%int64(len(thinkingTexts))],
-			Size:            20,
-			LabelColor:      t.FgBase,
-			GradColorA:      t.Primary,
-			GradColorB:      t.Secondary,
-			CycleColors:     true,
-			BuildLabel:      true,
-			BuildInterval:   50 * time.Millisecond,
-			BuildDelay:      300 * time.Millisecond,
-			ShufflePrelude:  1500 * time.Millisecond,
-			ShowEllipsis:    false,
-			CycleReveal:     true,
-			DisplayDuration: 4 * time.Second,
-		}),
+		msg:          m,
+		anim:         anim.New(settings),
+		animSettings: settings,
 	}
 	cmp.SetSize(width, 0)
 	if focused {
@@ -151,8 +155,16 @@ func (m *messageCmp) markFinished() {
 		m.duration = delta
 	}
 }
-func (m *messageCmp) setThinking(v bool) { m.thinking = v }
-func (m *messageCmp) isAssistant() bool  { return m.msg.Role == message.Assistant }
+func (m *messageCmp) setThinking(v bool) {
+	if m.thinking == v {
+		return
+	}
+	m.thinking = v
+	if v {
+		m.anim = anim.New(m.animSettings)
+	}
+}
+func (m *messageCmp) isAssistant() bool { return m.msg.Role == message.Assistant }
 
 func (m *messageCmp) setAgentInfo(id, name, color string) bool {
 	trimmedID := strings.TrimSpace(id)
@@ -304,16 +316,8 @@ func (m *messageCmp) View() string {
 	}
 
 	var parts []string
-	if m.isAssistant() && m.thinking {
-		// Constrain spinner width to available message width (accounting for padding/borders)
-		spinnerView := m.anim.View()
-		maxSpinnerWidth := max(m.width-4, 10) // Reserve space for borders/padding, minimum 10
-		if lipgloss.Width(spinnerView) > maxSpinnerWidth {
-			spinnerView = lipgloss.NewStyle().MaxWidth(maxSpinnerWidth).Render(spinnerView)
-		}
-		parts = append(parts, t.S().Base.PaddingLeft(0).Render(spinnerView))
-	}
 
+	// Render content first (so it appears at the top)
 	content := strings.TrimSuffix(m.content(), "\n")
 	if content != "" {
 		const cancelSuffix = "Request has been cancelled."
@@ -341,6 +345,18 @@ func (m *messageCmp) View() string {
 		}
 	}
 
+	// Render spinner second (so it appears below content)
+	if m.isAssistant() && m.thinking {
+		// Constrain spinner width to available message width (accounting for padding/borders)
+		spinnerView := m.anim.View()
+		maxSpinnerWidth := max(m.width-4, 10) // Reserve space for borders/padding, minimum 10
+		if lipgloss.Width(spinnerView) > maxSpinnerWidth {
+			spinnerView = lipgloss.NewStyle().MaxWidth(maxSpinnerWidth).Render(spinnerView)
+		}
+		parts = append(parts, t.S().Base.PaddingLeft(0).Render(spinnerView))
+	}
+
+	// Render footer last (so it appears at the bottom when not thinking)
 	if m.isAssistant() && !m.thinking {
 		d := m.duration
 		if d <= 0 && !m.finishedAt.IsZero() && !m.startedAt.IsZero() {
@@ -572,23 +588,9 @@ func (m *messageCmp) HandleMouseEvent(msg tea.Msg, messageY int) tea.Cmd {
 }
 
 func (m *messageCmp) contentStartOffset(hasContent bool) int {
-	offset := 0
-
-	if m.isAssistant() && m.thinking {
-		spinnerView := m.anim.View()
-		maxSpinnerWidth := max(m.width-4, 10)
-		if lipgloss.Width(spinnerView) > maxSpinnerWidth {
-			spinnerView = lipgloss.NewStyle().MaxWidth(maxSpinnerWidth).Render(spinnerView)
-		}
-
-		offset += lipgloss.Height(spinnerView)
-
-		if hasContent {
-			offset++
-		}
-	}
-
-	return offset
+	// Content is now always at the top, so offset is always 0
+	// (spinner renders below content instead of above)
+	return 0
 }
 
 func findWordBounds(line string, col int) (int, int) {

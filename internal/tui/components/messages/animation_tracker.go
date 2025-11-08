@@ -129,13 +129,8 @@ func (at *AnimationTracker) InitializeAnimatingItems(items []MessageCmp) tea.Cmd
 		if _, alreadyInitialized := at.initializedItems[idx]; alreadyInitialized {
 			continue
 		}
-		if toolCmp, ok := items[idx].(ToolCallCmp); ok {
-			if toolCmp.Animating() {
-				if initCmd := toolCmp.Init(); initCmd != nil {
-					cmds = append(cmds, initCmd)
-					at.initializedItems[idx] = struct{}{}
-				}
-			}
+		if initCmd := at.InitializeItem(idx, items[idx]); initCmd != nil {
+			cmds = append(cmds, initCmd)
 		}
 	}
 	if len(cmds) > 0 {
@@ -170,22 +165,7 @@ func (at *AnimationTracker) Clear() {
 // Returns an Init() command if the item is animating.
 func (at *AnimationTracker) TrackAppendedItem(idx int, cmp MessageCmp) tea.Cmd {
 	at.Track(idx, cmp)
-
-	// For tool components, return their Init() if they're animating
-	if toolCmp, ok := cmp.(ToolCallCmp); ok {
-		if toolCmp.Animating() {
-			return toolCmp.Init()
-		}
-	}
-
-	// For message components with thinking state
-	if msgCmp, ok := cmp.(*messageCmp); ok {
-		if msgCmp.isAssistant() && msgCmp.thinking {
-			return msgCmp.Init()
-		}
-	}
-
-	return nil
+	return at.InitializeItem(idx, cmp)
 }
 
 // UpdateAfterEntryChange re-tracks an item after its entry data has changed.
@@ -205,7 +185,7 @@ func (at *AnimationTracker) UpdateAfterEntryChange(idx int, cmp MessageCmp, wasA
 	at.Track(idx, cmp)
 
 	if nowAnimating && !wasAnimating {
-		return toolCmp.Init()
+		return at.InitializeItem(idx, cmp)
 	}
 	return nil
 }
@@ -218,4 +198,48 @@ func (at *AnimationTracker) GetAnimatedIndices() []int {
 	}
 	sort.Ints(indices)
 	return indices
+}
+
+func (at *AnimationTracker) HasVisibleToolAnimating(items []MessageCmp) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for idx := range at.animatedItems {
+		if idx < 0 || idx >= len(items) {
+			continue
+		}
+		if _, ok := items[idx].(ToolCallCmp); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (at *AnimationTracker) initCommandFor(cmp MessageCmp) tea.Cmd {
+	switch c := cmp.(type) {
+	case ToolCallCmp:
+		if c.Animating() {
+			return c.Init()
+		}
+	case *messageCmp:
+		if c.isAssistant() && c.thinking {
+			return c.Init()
+		}
+	}
+	return nil
+}
+
+func (at *AnimationTracker) InitializeItem(idx int, cmp MessageCmp) tea.Cmd {
+	if idx < 0 || cmp == nil {
+		return nil
+	}
+	at.ensureMaps()
+	if _, already := at.initializedItems[idx]; already {
+		return nil
+	}
+	initCmd := at.initCommandFor(cmp)
+	if initCmd != nil {
+		at.initializedItems[idx] = struct{}{}
+	}
+	return initCmd
 }

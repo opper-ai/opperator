@@ -34,11 +34,11 @@ type toolCallCmp struct {
 	width   int
 	focused bool
 
-	entry toolstate.Execution
-
-	spinner      *anim.Anim
-	spinning     bool
-	savedPending string
+	entry           toolstate.Execution
+	spinner         *anim.Anim
+	spinnerSettings anim.Settings
+	spinning        bool
+	savedPending    string
 }
 
 func NewToolCallCmp(entry toolstate.Execution) ToolCallCmp {
@@ -50,7 +50,7 @@ func NewToolCallCmp(entry toolstate.Execution) ToolCallCmp {
 		"One second...",
 	}
 
-	a := anim.New(anim.Settings{
+	settings := anim.Settings{
 		Label:           thinkingTexts[time.Now().UnixNano()%int64(len(thinkingTexts))],
 		Size:            50,
 		LabelColor:      t.FgBase,
@@ -64,9 +64,13 @@ func NewToolCallCmp(entry toolstate.Execution) ToolCallCmp {
 		ShowEllipsis:    false,
 		CycleReveal:     true,
 		DisplayDuration: 4 * time.Second,
-	})
+	}
 
-	cmp := &toolCallCmp{entry: entry, spinner: a}
+	cmp := &toolCallCmp{
+		entry:           entry,
+		spinner:         anim.New(settings),
+		spinnerSettings: settings,
+	}
 	cmp.SetEntry(entry)
 	return cmp
 }
@@ -126,8 +130,7 @@ func (m *toolCallCmp) View() string {
 	call := m.entry.Call
 	result := m.entry.Result
 
-	pending := !m.entry.Finished()
-	if pending {
+	if m.spinning {
 		label := executionLabel(m.entry)
 		if hasDef && def.Label != "" {
 			label = def.Label
@@ -184,8 +187,12 @@ func (m *toolCallCmp) Entry() toolstate.Execution { return m.entry }
 func (m *toolCallCmp) SetSize(w, _ int) tea.Cmd   { m.width = w; return nil }
 
 func (m *toolCallCmp) SetEntry(entry toolstate.Execution) {
+	prevSpinning := m.spinning
 	m.entry = entry
 	m.spinning = shouldSpin(entry)
+	if m.spinning && !prevSpinning {
+		m.spinner = anim.New(m.spinnerSettings)
+	}
 
 	if entry.Flags.Async {
 		label := strings.TrimSpace(executionLabel(entry))
