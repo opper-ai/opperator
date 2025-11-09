@@ -22,9 +22,10 @@ type AgentStateChange struct {
 	Type      AgentStateChangeType
 
 	// Metadata fields (populated when Type == AgentStateMetadata)
-	Description  string
-	SystemPrompt string
-	Color        string
+	Description         string
+	SystemPrompt        string
+	SystemPromptReplace bool
+	Color               string
 
 	// Logs fields (populated when Type == AgentStateLogs)
 	Logs     []string // For bulk log updates (initial load)

@@ -22,14 +22,14 @@ import (
 type StateChangeCallback func(agentName string, changeType string, data interface{})
 
 type Manager struct {
-	agents            map[string]*Agent
-	config            *Config
-	configPath        string
-	mu                sync.RWMutex
-	stopWatching      chan struct{}
-	lastModTime       time.Time
-	persistence       *AgentPersistence
-	onStateChange     StateChangeCallback
+	agents        map[string]*Agent
+	config        *Config
+	configPath    string
+	mu            sync.RWMutex
+	stopWatching  chan struct{}
+	lastModTime   time.Time
+	persistence   *AgentPersistence
+	onStateChange StateChangeCallback
 }
 
 func New(configPath string) (*Manager, error) {
@@ -521,6 +521,7 @@ func (m *Manager) ReloadConfig() error {
 						agent.mu.Lock()
 						agent.description = strings.TrimSpace(newAgent.Description)
 						agent.systemPrompt = strings.TrimSpace(newAgent.SystemPrompt)
+						agent.systemPromptReplace = false
 						agent.color = strings.TrimSpace(newAgent.Color)
 						agent.mu.Unlock()
 
@@ -528,9 +529,10 @@ func (m *Manager) ReloadConfig() error {
 						metadataChanges = append(metadataChanges, metadataChange{
 							agentName: name,
 							update: MetadataUpdate{
-								Description:  newAgent.Description,
-								SystemPrompt: newAgent.SystemPrompt,
-								Color:        newAgent.Color,
+								Description:         newAgent.Description,
+								SystemPrompt:        newAgent.SystemPrompt,
+								SystemPromptReplace: false,
+								Color:               newAgent.Color,
 							},
 						})
 					}

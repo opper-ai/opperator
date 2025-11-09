@@ -590,10 +590,12 @@ class Protocol:
         Protocol.send_message(MessageType.COMMAND_REGISTRY, msg.to_dict())
 
     @staticmethod
-    def send_system_prompt(prompt: Optional[str]) -> None:
+    def send_system_prompt(prompt: Optional[str], *, replace: bool = False) -> None:
         """Publish the managed agent's system prompt to the manager."""
 
         payload = {'prompt': (prompt or '').strip()}
+        if replace:
+            payload['replace'] = True
         Protocol.send_message(MessageType.SYSTEM_PROMPT, payload)
 
     @staticmethod

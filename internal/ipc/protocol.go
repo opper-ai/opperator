@@ -33,13 +33,13 @@ const (
 	RequestWatchAgentState   RequestType = "watch_agent_state"
 	RequestWatchAllTasks     RequestType = "watch_all_tasks"
 	RequestLifecycleEvent    RequestType = "lifecycle_event"
-	RequestGetAgentConfig      RequestType = "get_agent_config"
-	RequestBootstrapAgent      RequestType = "bootstrap_agent"
-	RequestDeleteAgent         RequestType = "delete_agent"
-	RequestReceiveAgent        RequestType = "receive_agent"
-	RequestPackageAgent        RequestType = "package_agent"
-	RequestSetInvocationDir    RequestType = "set_invocation_dir"
-	RequestGetInvocationDir    RequestType = "get_invocation_dir"
+	RequestGetAgentConfig    RequestType = "get_agent_config"
+	RequestBootstrapAgent    RequestType = "bootstrap_agent"
+	RequestDeleteAgent       RequestType = "delete_agent"
+	RequestReceiveAgent      RequestType = "receive_agent"
+	RequestPackageAgent      RequestType = "package_agent"
+	RequestSetInvocationDir  RequestType = "set_invocation_dir"
+	RequestGetInvocationDir  RequestType = "get_invocation_dir"
 )
 
 type Request struct {
@@ -65,27 +65,27 @@ type Request struct {
 	NoStart       bool                   `json:"no_start,omitempty"`
 
 	// Agent transfer fields
-	AgentPackage  *agent.AgentPackage    `json:"agent_package,omitempty"`
-	Force         bool                   `json:"force,omitempty"`
-	StartAfter    bool                   `json:"start_after,omitempty"`
+	AgentPackage *agent.AgentPackage `json:"agent_package,omitempty"`
+	Force        bool                `json:"force,omitempty"`
+	StartAfter   bool                `json:"start_after,omitempty"`
 }
 
 type Response struct {
-	Success        bool                         `json:"success"`
-	Error          string                       `json:"error,omitempty"`
-	Processes      []*ProcessInfo               `json:"processes,omitempty"`
-	Logs           []string                     `json:"logs,omitempty"`
-	Command        *CommandResponse             `json:"command,omitempty"`
-	Commands       []protocol.CommandDescriptor `json:"commands,omitempty"`
-	Task           *ToolTask                    `json:"task,omitempty"`
-	Tasks          []*ToolTask                  `json:"tasks,omitempty"`
-	Secret         string                       `json:"secret,omitempty"`
-	Secrets        []string                     `json:"secrets,omitempty"`
-	Metrics        *ToolTaskMetrics             `json:"metrics,omitempty"`
-	Sections       interface{}                  `json:"sections,omitempty"`
-	ProcessRoot    string                       `json:"process_root,omitempty"`
-	AgentPackage   *agent.AgentPackage          `json:"agent_package,omitempty"`
-	InvocationDir  string                       `json:"invocation_dir,omitempty"`
+	Success       bool                         `json:"success"`
+	Error         string                       `json:"error,omitempty"`
+	Processes     []*ProcessInfo               `json:"processes,omitempty"`
+	Logs          []string                     `json:"logs,omitempty"`
+	Command       *CommandResponse             `json:"command,omitempty"`
+	Commands      []protocol.CommandDescriptor `json:"commands,omitempty"`
+	Task          *ToolTask                    `json:"task,omitempty"`
+	Tasks         []*ToolTask                  `json:"tasks,omitempty"`
+	Secret        string                       `json:"secret,omitempty"`
+	Secrets       []string                     `json:"secrets,omitempty"`
+	Metrics       *ToolTaskMetrics             `json:"metrics,omitempty"`
+	Sections      interface{}                  `json:"sections,omitempty"`
+	ProcessRoot   string                       `json:"process_root,omitempty"`
+	AgentPackage  *agent.AgentPackage          `json:"agent_package,omitempty"`
+	InvocationDir string                       `json:"invocation_dir,omitempty"`
 }
 
 type ToolTaskMetrics struct {
@@ -105,16 +105,17 @@ type ToolTaskEvent struct {
 }
 
 type AgentStateEvent struct {
-	Type           string                       `json:"type"` // "metadata", "logs", "sections", "status"
-	AgentName      string                       `json:"agent_name"`
-	Description    string                       `json:"description,omitempty"`
-	SystemPrompt   string                       `json:"system_prompt,omitempty"`
-	Color          string                       `json:"color,omitempty"`
-	Logs           []string                     `json:"logs,omitempty"`      // For bulk log updates (initial load)
-	LogEntry       string                       `json:"log_entry,omitempty"` // For single log append events
-	CustomSections interface{}                  `json:"custom_sections,omitempty"`
-	Status         string                       `json:"status,omitempty"`
-	Commands       []protocol.CommandDescriptor `json:"commands,omitempty"`
+	Type                string                       `json:"type"` // "metadata", "logs", "sections", "status"
+	AgentName           string                       `json:"agent_name"`
+	Description         string                       `json:"description,omitempty"`
+	SystemPrompt        string                       `json:"system_prompt,omitempty"`
+	SystemPromptReplace bool                         `json:"system_prompt_replace,omitempty"`
+	Color               string                       `json:"color,omitempty"`
+	Logs                []string                     `json:"logs,omitempty"`      // For bulk log updates (initial load)
+	LogEntry            string                       `json:"log_entry,omitempty"` // For single log append events
+	CustomSections      interface{}                  `json:"custom_sections,omitempty"`
+	Status              string                       `json:"status,omitempty"`
+	Commands            []protocol.CommandDescriptor `json:"commands,omitempty"`
 }
 
 type CommandResponse struct {
@@ -154,14 +155,15 @@ type ToolTaskProgress struct {
 }
 
 type ProcessInfo struct {
-	Name         string              `json:"name"`
-	Description  string              `json:"description,omitempty"`
-	Status       agent.ProcessStatus `json:"status"`
-	PID          int                 `json:"pid"`
-	RestartCount int                 `json:"restart_count"`
-	Uptime       int64               `json:"uptime"` // seconds
-	SystemPrompt string              `json:"system_prompt,omitempty"`
-	Color        string              `json:"color,omitempty"`
+	Name                string              `json:"name"`
+	Description         string              `json:"description,omitempty"`
+	Status              agent.ProcessStatus `json:"status"`
+	PID                 int                 `json:"pid"`
+	RestartCount        int                 `json:"restart_count"`
+	Uptime              int64               `json:"uptime"` // seconds
+	SystemPrompt        string              `json:"system_prompt,omitempty"`
+	SystemPromptReplace bool                `json:"system_prompt_replace,omitempty"`
+	Color               string              `json:"color,omitempty"`
 }
 
 func EncodeRequest(req Request) ([]byte, error) {

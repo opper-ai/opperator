@@ -22,17 +22,18 @@ import (
 
 // agentStateEventMsg wraps an agent state change event
 type agentStateEventMsg struct {
-	AgentName      string
-	Type           string
-	Description    string
-	SystemPrompt   string
-	Color          string
-	Logs           []string // For bulk log updates (initial load)
-	LogEntry       string   // For single log append events
-	CustomSections []cmpsidebar.CustomSection
-	Status         string
-	Commands       []protocol.CommandDescriptor
-	Daemon         string // NEW: Which daemon this event came from
+	AgentName           string
+	Type                string
+	Description         string
+	SystemPrompt        string
+	SystemPromptReplace bool
+	Color               string
+	Logs                []string // For bulk log updates (initial load)
+	LogEntry            string   // For single log append events
+	CustomSections      []cmpsidebar.CustomSection
+	Status              string
+	Commands            []protocol.CommandDescriptor
+	Daemon              string // NEW: Which daemon this event came from
 }
 
 // initAgentStateWatcher initializes the multi-daemon agent state watcher
@@ -158,16 +159,17 @@ func (m *Model) watchSingleDaemon(ctx context.Context, daemonName string, eventC
 	// Read events and send to shared channel
 	for scanner.Scan() {
 		var event struct {
-			Type           string                       `json:"type"`
-			AgentName      string                       `json:"agent_name"`
-			Description    string                       `json:"description,omitempty"`
-			SystemPrompt   string                       `json:"system_prompt,omitempty"`
-			Color          string                       `json:"color,omitempty"`
-			Logs           []string                     `json:"logs,omitempty"`
-			LogEntry       string                       `json:"log_entry,omitempty"`
-			CustomSections interface{}                  `json:"custom_sections,omitempty"`
-			Status         string                       `json:"status,omitempty"`
-			Commands       []protocol.CommandDescriptor `json:"commands,omitempty"`
+			Type                string                       `json:"type"`
+			AgentName           string                       `json:"agent_name"`
+			Description         string                       `json:"description,omitempty"`
+			SystemPrompt        string                       `json:"system_prompt,omitempty"`
+			SystemPromptReplace bool                         `json:"system_prompt_replace,omitempty"`
+			Color               string                       `json:"color,omitempty"`
+			Logs                []string                     `json:"logs,omitempty"`
+			LogEntry            string                       `json:"log_entry,omitempty"`
+			CustomSections      interface{}                  `json:"custom_sections,omitempty"`
+			Status              string                       `json:"status,omitempty"`
+			Commands            []protocol.CommandDescriptor `json:"commands,omitempty"`
 		}
 
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -202,17 +204,18 @@ func (m *Model) watchSingleDaemon(ctx context.Context, daemonName string, eventC
 
 		select {
 		case eventCh <- agentStateEventMsg{
-			AgentName:      event.AgentName,
-			Type:           event.Type,
-			Description:    event.Description,
-			SystemPrompt:   event.SystemPrompt,
-			Color:          event.Color,
-			Logs:           event.Logs,
-			LogEntry:       event.LogEntry,
-			CustomSections: sections,
-			Status:         event.Status,
-			Commands:       protocol.NormalizeCommandDescriptors(event.Commands),
-			Daemon:         daemonName, // Tag event with daemon name
+			AgentName:           event.AgentName,
+			Type:                event.Type,
+			Description:         event.Description,
+			SystemPrompt:        event.SystemPrompt,
+			SystemPromptReplace: event.SystemPromptReplace,
+			Color:               event.Color,
+			Logs:                event.Logs,
+			LogEntry:            event.LogEntry,
+			CustomSections:      sections,
+			Status:              event.Status,
+			Commands:            protocol.NormalizeCommandDescriptors(event.Commands),
+			Daemon:              daemonName, // Tag event with daemon name
 		}:
 		case <-ctx.Done():
 			return

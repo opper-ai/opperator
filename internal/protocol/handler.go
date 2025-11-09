@@ -355,7 +355,7 @@ type DefaultHandlers struct {
 	OnLifecycleEvent  func(eventType string, data map[string]interface{})
 	OnError           func(err string, code int)
 	OnResponse        func(resp *ResponseMessage)
-	OnSystemPrompt    func(prompt string)
+	OnSystemPrompt    func(prompt string, replace bool)
 	OnDescription     func(description string)
 	OnCommandRegistry func(commands []CommandDescriptor)
 	OnCommandProgress func(progress CommandProgressMessage)
@@ -447,7 +447,7 @@ func (p *ProcessProtocol) RegisterDefaults(handlers *DefaultHandlers) {
 			if err := msg.ExtractData(&data); err != nil {
 				return err
 			}
-			handlers.OnSystemPrompt(data.Prompt)
+			handlers.OnSystemPrompt(data.Prompt, data.Replace)
 			return nil
 		})
 	}

@@ -18,20 +18,22 @@ import (
 )
 
 type AgentMetadata struct {
-	Name         string
-	Description  string
-	SystemPrompt string
-	Commands     []protocol.CommandDescriptor
-	Color        string
+	Name                string
+	Description         string
+	SystemPrompt        string
+	SystemPromptReplace bool
+	Commands            []protocol.CommandDescriptor
+	Color               string
 }
 
 type AgentInfo struct {
-	Name         string
-	Description  string
-	SystemPrompt string
-	Status       string
-	Color        string
-	Daemon       string // Which daemon this agent is running on
+	Name                string
+	Description         string
+	SystemPrompt        string
+	SystemPromptReplace bool
+	Status              string
+	Color               string
+	Daemon              string // Which daemon this agent is running on
 }
 
 var (
@@ -171,11 +173,12 @@ func listAgentsFromDaemonConfig(ctx context.Context, daemonName string) ([]Agent
 		Success   bool   `json:"success"`
 		Error     string `json:"error"`
 		Processes []struct {
-			Name         string `json:"name"`
-			Description  string `json:"description"`
-			SystemPrompt string `json:"system_prompt"`
-			Status       string `json:"status"`
-			Color        string `json:"color"`
+			Name                string `json:"name"`
+			Description         string `json:"description"`
+			SystemPrompt        string `json:"system_prompt"`
+			SystemPromptReplace bool   `json:"system_prompt_replace,omitempty"`
+			Status              string `json:"status"`
+			Color               string `json:"color"`
 		} `json:"processes"`
 	}
 	if err := json.Unmarshal(data, &listResp); err != nil {
@@ -191,11 +194,12 @@ func listAgentsFromDaemonConfig(ctx context.Context, daemonName string) ([]Agent
 	agents := make([]AgentInfo, 0, len(listResp.Processes))
 	for _, proc := range listResp.Processes {
 		agents = append(agents, AgentInfo{
-			Name:         proc.Name,
-			Description:  proc.Description,
-			SystemPrompt: proc.SystemPrompt,
-			Status:       proc.Status,
-			Color:        proc.Color,
+			Name:                proc.Name,
+			Description:         proc.Description,
+			SystemPrompt:        proc.SystemPrompt,
+			SystemPromptReplace: proc.SystemPromptReplace,
+			Status:              proc.Status,
+			Color:               proc.Color,
 			// Daemon field will be set by caller
 		})
 	}
@@ -220,6 +224,7 @@ func FetchAgentMetadata(ctx context.Context, name string) (AgentMetadata, error)
 			result.Name = proc.Name
 			result.Description = proc.Description
 			result.SystemPrompt = proc.SystemPrompt
+			result.SystemPromptReplace = proc.SystemPromptReplace
 			result.Color = proc.Color
 			agentDaemon = proc.Daemon // Remember which daemon has this agent
 			break
@@ -374,9 +379,9 @@ func FetchAgentCustomSections(ctx context.Context, name string) ([]sidebar.Custo
 	}
 
 	var resp struct {
-		Success  bool                      `json:"success"`
-		Error    string                    `json:"error"`
-		Sections []sidebar.CustomSection   `json:"sections"`
+		Success  bool                    `json:"success"`
+		Error    string                  `json:"error"`
+		Sections []sidebar.CustomSection `json:"sections"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, nil // Ignore decode errors for now

@@ -28,7 +28,7 @@ type TodoInfo struct {
 }
 
 // BuildInstructions constructs the instruction payload for a session request.
-func BuildInstructions(basePrompt, agentName, agentPrompt string, agentOptions []AgentOption, agentListErr error, focusedAgentTools []tooling.Spec, focusedAgentInfo FocusedAgentInfo, coreAgentID string) string {
+func BuildInstructions(basePrompt, agentName, agentPrompt string, agentPromptReplace bool, agentOptions []AgentOption, agentListErr error, focusedAgentTools []tooling.Spec, focusedAgentInfo FocusedAgentInfo, coreAgentID string) string {
 	base := strings.TrimSpace(basePrompt)
 	if base == "" {
 		base = coreagent.Default().Prompt
@@ -36,6 +36,10 @@ func BuildInstructions(basePrompt, agentName, agentPrompt string, agentOptions [
 	listSection := strings.TrimSpace(agentListInstructions(agentOptions, agentListErr))
 	trimmedAgent := strings.TrimSpace(agentName)
 	if trimmedAgent != "" {
+		trimmedPrompt := strings.TrimSpace(agentPrompt)
+		if agentPromptReplace && trimmedPrompt != "" {
+			return trimmedPrompt
+		}
 		var b strings.Builder
 		opperatorPrompt := strings.TrimSpace(coreagent.Default().Prompt)
 		if opperatorPrompt == "" {
@@ -49,7 +53,7 @@ func BuildInstructions(basePrompt, agentName, agentPrompt string, agentOptions [
 		b.WriteString("\n\nYou are currently interacting directly with the managed agent '")
 		b.WriteString(trimmedAgent)
 		b.WriteString("'. Use the available command tools to operate it. If arguments are required, construct valid JSON objects in the tool call.")
-		if trimmedPrompt := strings.TrimSpace(agentPrompt); trimmedPrompt != "" {
+		if trimmedPrompt != "" {
 			b.WriteString("\n\nSub-agent instructions:\n")
 			b.WriteString(trimmedPrompt)
 			b.WriteString("\n\nImportant:\nPlace priority on following these sub-agent instructions over any previous instructions.\n")

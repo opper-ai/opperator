@@ -24,6 +24,7 @@ func newSessionAdapter(m *Model, sessionID string) *sessionstate.Adapter {
 	options, listErr := m.agents.collectSessionAgentOptions()
 	activeName := m.currentActiveAgentName()
 	activePrompt := m.currentActiveAgentPrompt()
+	activePromptReplace := m.currentActiveAgentPromptReplace()
 	activeCommands := m.currentActiveAgentCommands()
 	corePrompt := m.currentCoreAgentPrompt()
 	activeColor := m.currentActiveAgentColor()
@@ -52,18 +53,19 @@ func newSessionAdapter(m *Model, sessionID string) *sessionstate.Adapter {
 		m.sessionManager(),
 		sessionID,
 		sessionstate.AdapterOptions{
-			AgentName:        activeName,
-			AgentColor:       activeColor,
-			AgentPrompt:      activePrompt,
-			AgentCommands:    append([]protocol.CommandDescriptor(nil), activeCommands...),
-			CorePrompt:       corePrompt,
-			CoreAgentID:      coreID,
-			CoreAgentName:    coreName,
-			CoreAgentColor:   coreColor,
-			BaseSpecs:        m.baseToolSpecsForSession(),
-			AgentOptions:     options,
-			AgentListErr:     listErr,
-			FocusedAgentInfo: focusedAgentInfo,
+			AgentName:          activeName,
+			AgentColor:         activeColor,
+			AgentPrompt:        activePrompt,
+			AgentPromptReplace: activePromptReplace,
+			AgentCommands:      append([]protocol.CommandDescriptor(nil), activeCommands...),
+			CorePrompt:         corePrompt,
+			CoreAgentID:        coreID,
+			CoreAgentName:      coreName,
+			CoreAgentColor:     coreColor,
+			BaseSpecs:          m.baseToolSpecsForSession(),
+			AgentOptions:       options,
+			AgentListErr:       listErr,
+			FocusedAgentInfo:   focusedAgentInfo,
 			ExtraToolSpecs: func() []tooling.Spec {
 				return m.extraToolSpecsForSession()
 			},
@@ -227,6 +229,7 @@ func (m *Model) buildInstructionsForSession(sessionID, basePrompt, agentName, ag
 	var focusedAgentTools []tooling.Spec
 	focusedAgentInfo := sessionstate.FocusedAgentInfo{}
 	coreAgentID := m.currentCoreAgentID()
+	agentPromptReplace := m.currentActiveAgentPromptReplace()
 
 	if m.agents != nil {
 		focusedAgentTools = m.agents.extraSpecsForSession()
@@ -246,7 +249,7 @@ func (m *Model) buildInstructionsForSession(sessionID, basePrompt, agentName, ag
 		}
 	}
 
-	return sessionstate.BuildInstructions(basePrompt, agentName, agentPrompt, agentOptions, agentListErr, focusedAgentTools, focusedAgentInfo, coreAgentID)
+	return sessionstate.BuildInstructions(basePrompt, agentName, agentPrompt, agentPromptReplace, agentOptions, agentListErr, focusedAgentTools, focusedAgentInfo, coreAgentID)
 }
 
 func (m *Model) buildConversationForSession(sessionID string) []map[string]any {

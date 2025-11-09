@@ -95,7 +95,8 @@ type ResponseMessage struct {
 // SystemPromptMessage allows an agent to publish its system prompt to the
 // manager.
 type SystemPromptMessage struct {
-	Prompt string `json:"prompt"`
+	Prompt  string `json:"prompt"`
+	Replace bool   `json:"replace,omitempty"`
 }
 
 // AgentDescriptionMessage allows an agent to publish its human-readable description.
@@ -150,8 +151,8 @@ type CommandArgument struct {
 	Required    bool                   `json:"required,omitempty"`
 	Default     interface{}            `json:"default,omitempty"`
 	Enum        []interface{}          `json:"enum,omitempty"`
-	Items       map[string]interface{} `json:"items,omitempty"`       // Schema for array items
-	Properties  map[string]interface{} `json:"properties,omitempty"`  // Schema for object properties
+	Items       map[string]interface{} `json:"items,omitempty"`      // Schema for array items
+	Properties  map[string]interface{} `json:"properties,omitempty"` // Schema for object properties
 }
 
 // CommandRegistryMessage announces available commands from the agent

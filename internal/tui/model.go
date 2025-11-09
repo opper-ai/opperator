@@ -232,6 +232,13 @@ func (m *Model) currentActiveAgentPrompt() string {
 	return prompt
 }
 
+func (m *Model) currentActiveAgentPromptReplace() bool {
+	if m.agents == nil {
+		return false
+	}
+	return m.agents.activeAgentPromptReplace()
+}
+
 func (m *Model) currentActiveAgentCommands() []protocol.CommandDescriptor {
 	if m.agents == nil {
 		return nil
@@ -740,6 +747,7 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 				agentName := strings.TrimSpace(v.AgentName)
 				description := strings.TrimSpace(v.Description)
 				systemPrompt := strings.TrimSpace(v.SystemPrompt)
+				systemPromptReplace := v.SystemPromptReplace
 				color := strings.TrimSpace(v.Color)
 
 				// Invalidate metadata cache when metadata updates
@@ -748,7 +756,7 @@ func (m *Model) handleMessage(msg tea.Msg) tea.Cmd {
 				}
 
 				if m.agents != nil {
-					m.agents.updateActiveAgentMetadata(agentName, description, systemPrompt, color)
+					m.agents.updateActiveAgentMetadata(agentName, description, systemPrompt, color, systemPromptReplace)
 				}
 				if m.sidebar != nil {
 					if agentName != "" && strings.EqualFold(agentName, currentAgent) {

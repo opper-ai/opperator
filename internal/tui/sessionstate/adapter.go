@@ -13,19 +13,20 @@ import (
 
 // AdapterOptions configures the session adapter presented to the LLM engine.
 type AdapterOptions struct {
-	AgentName        string
-	AgentColor       string
-	AgentPrompt      string
-	AgentCommands    []protocol.CommandDescriptor
-	CorePrompt       string
-	CoreAgentID      string
-	CoreAgentName    string
-	CoreAgentColor   string
-	BaseSpecs        []tooling.Spec
-	AgentOptions     []AgentOption
-	AgentListErr     error
-	FocusedAgentInfo FocusedAgentInfo
-	ExtraToolSpecs   func() []tooling.Spec
+	AgentName          string
+	AgentColor         string
+	AgentPrompt        string
+	AgentPromptReplace bool
+	AgentCommands      []protocol.CommandDescriptor
+	CorePrompt         string
+	CoreAgentID        string
+	CoreAgentName      string
+	CoreAgentColor     string
+	BaseSpecs          []tooling.Spec
+	AgentOptions       []AgentOption
+	AgentListErr       error
+	FocusedAgentInfo   FocusedAgentInfo
+	ExtraToolSpecs     func() []tooling.Spec
 }
 
 // Adapter bridges session state with the engine request lifecycle.
@@ -46,7 +47,7 @@ func (a *Adapter) BuildInstructions() string {
 	if a.opts.ExtraToolSpecs != nil {
 		focusedAgentTools = a.opts.ExtraToolSpecs()
 	}
-	return BuildInstructions(a.opts.CorePrompt, a.opts.AgentName, a.opts.AgentPrompt, a.opts.AgentOptions, a.opts.AgentListErr, focusedAgentTools, a.opts.FocusedAgentInfo, a.opts.CoreAgentID)
+	return BuildInstructions(a.opts.CorePrompt, a.opts.AgentName, a.opts.AgentPrompt, a.opts.AgentPromptReplace, a.opts.AgentOptions, a.opts.AgentListErr, focusedAgentTools, a.opts.FocusedAgentInfo, a.opts.CoreAgentID)
 }
 
 // BuildConversation converts persisted history into the engine format.

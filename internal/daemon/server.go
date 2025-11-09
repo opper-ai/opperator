@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"opperator/internal/agent"
 	"opperator/config"
+	"opperator/internal/agent"
 	"opperator/internal/credentials"
 	"opperator/internal/ipc"
 	"opperator/internal/protocol"
@@ -25,8 +25,8 @@ import (
 	"tui/components/sidebar"
 	"tui/tools"
 
-	_ "modernc.org/sqlite"
 	"gopkg.in/yaml.v3"
+	_ "modernc.org/sqlite"
 )
 
 type Server struct {
@@ -1146,14 +1146,15 @@ func (s *Server) listAgents() ipc.Response {
 		}
 
 		infos[i] = &ipc.ProcessInfo{
-			Name:         a.Config.Name,
-			Description:  a.Description(),
-			Status:       a.GetStatus(),
-			PID:          a.PID,
-			RestartCount: a.RestartCount,
-			Uptime:       uptime,
-			SystemPrompt: a.SystemPrompt(),
-			Color:        a.Color(),
+			Name:                a.Config.Name,
+			Description:         a.Description(),
+			Status:              a.GetStatus(),
+			PID:                 a.PID,
+			RestartCount:        a.RestartCount,
+			Uptime:              uptime,
+			SystemPrompt:        a.SystemPrompt(),
+			SystemPromptReplace: a.SystemPromptReplace(),
+			Color:               a.Color(),
 		}
 	}
 
@@ -1236,16 +1237,18 @@ func (s *Server) publishStateChange(agentName string, changeType string, data in
 		case agent.MetadataUpdate:
 			change.Description = meta.Description
 			change.SystemPrompt = meta.SystemPrompt
+			change.SystemPromptReplace = meta.SystemPromptReplace
 			change.Color = meta.Color
-			log.Printf("[StateChange] Publishing metadata change for agent %s (description len=%d, prompt len=%d, color=%s)",
-				agentName, len(meta.Description), len(meta.SystemPrompt), meta.Color)
+			log.Printf("[StateChange] Publishing metadata change for agent %s (description len=%d, prompt len=%d, replace=%v, color=%s)",
+				agentName, len(meta.Description), len(meta.SystemPrompt), meta.SystemPromptReplace, meta.Color)
 		case *agent.MetadataUpdate:
 			if meta != nil {
 				change.Description = meta.Description
 				change.SystemPrompt = meta.SystemPrompt
+				change.SystemPromptReplace = meta.SystemPromptReplace
 				change.Color = meta.Color
-				log.Printf("[StateChange] Publishing metadata change for agent %s (description len=%d, prompt len=%d, color=%s)",
-					agentName, len(meta.Description), len(meta.SystemPrompt), meta.Color)
+				log.Printf("[StateChange] Publishing metadata change for agent %s (description len=%d, prompt len=%d, replace=%v, color=%s)",
+					agentName, len(meta.Description), len(meta.SystemPrompt), meta.SystemPromptReplace, meta.Color)
 			}
 		default:
 			log.Printf("[StateChange] WARNING: metadata data is not agent.MetadataUpdate, got type %T", data)
@@ -1289,16 +1292,17 @@ func (s *Server) publishStateChange(agentName string, changeType string, data in
 
 func convertAgentStateEvent(ev AgentStateChange) ipc.AgentStateEvent {
 	return ipc.AgentStateEvent{
-		Type:           string(ev.Type),
-		AgentName:      ev.AgentName,
-		Description:    ev.Description,
-		SystemPrompt:   ev.SystemPrompt,
-		Color:          ev.Color,
-		Logs:           ev.Logs,
-		LogEntry:       ev.LogEntry,
-		CustomSections: ev.CustomSections,
-		Status:         ev.Status,
-		Commands:       ev.Commands,
+		Type:                string(ev.Type),
+		AgentName:           ev.AgentName,
+		Description:         ev.Description,
+		SystemPrompt:        ev.SystemPrompt,
+		SystemPromptReplace: ev.SystemPromptReplace,
+		Color:               ev.Color,
+		Logs:                ev.Logs,
+		LogEntry:            ev.LogEntry,
+		CustomSections:      ev.CustomSections,
+		Status:              ev.Status,
+		Commands:            ev.Commands,
 	}
 }
 

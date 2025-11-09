@@ -28,15 +28,16 @@ const (
 )
 
 type Agent struct {
-	Config         AgentConfig
-	Status         ProcessStatus
-	PID            int
-	StartTime      time.Time
-	RestartCount   int
-	systemPrompt   string
-	description    string
-	color          string
-	customSections map[string]sidebar.CustomSection
+	Config              AgentConfig
+	Status              ProcessStatus
+	PID                 int
+	StartTime           time.Time
+	RestartCount        int
+	systemPrompt        string
+	systemPromptReplace bool
+	description         string
+	color               string
+	customSections      map[string]sidebar.CustomSection
 
 	cmd    *exec.Cmd
 	stdout io.ReadCloser
@@ -65,9 +66,10 @@ type Agent struct {
 
 // MetadataUpdate captures the user-facing metadata for an agent.
 type MetadataUpdate struct {
-	Description  string
-	SystemPrompt string
-	Color        string
+	Description         string
+	SystemPrompt        string
+	SystemPromptReplace bool
+	Color               string
 }
 
 func NewAgent(config AgentConfig, persistence *AgentPersistence) *Agent {
@@ -438,10 +440,15 @@ func (a *Agent) setupProtocol() {
 				a.addLog(fmt.Sprintf("[command-response] id=%s error=%s", resp.CommandID, resp.Error))
 			}
 		},
-		OnSystemPrompt: func(prompt string) {
+		OnSystemPrompt: func(prompt string, replace bool) {
 			trimmed := strings.TrimSpace(prompt)
 			a.mu.Lock()
 			a.systemPrompt = trimmed
+			if trimmed == "" {
+				a.systemPromptReplace = false
+			} else {
+				a.systemPromptReplace = replace
+			}
 			a.mu.Unlock()
 			if trimmed != "" {
 				a.addLog("[system-prompt] updated")
@@ -616,6 +623,15 @@ func (a *Agent) SystemPrompt() string {
 	return strings.TrimSpace(a.Config.SystemPrompt)
 }
 
+func (a *Agent) SystemPromptReplace() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if strings.TrimSpace(a.systemPrompt) == "" {
+		return false
+	}
+	return a.systemPromptReplace
+}
+
 func (a *Agent) Description() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -648,6 +664,7 @@ func (a *Agent) Color() string {
 func (a *Agent) metadataSnapshot() MetadataUpdate {
 	a.mu.RLock()
 	systemPrompt := a.systemPrompt
+	systemPromptReplace := a.systemPromptReplace
 	description := a.description
 	color := a.color
 	a.mu.RUnlock()
@@ -657,17 +674,21 @@ func (a *Agent) metadataSnapshot() MetadataUpdate {
 		desc = strings.TrimSpace(a.Config.Description)
 	}
 	prompt := strings.TrimSpace(systemPrompt)
+	promptReplace := false
 	if prompt == "" {
 		prompt = strings.TrimSpace(a.Config.SystemPrompt)
+	} else {
+		promptReplace = systemPromptReplace
 	}
 	col := strings.TrimSpace(color)
 	if col == "" {
 		col = strings.TrimSpace(a.Config.Color)
 	}
 	return MetadataUpdate{
-		Description:  desc,
-		SystemPrompt: prompt,
-		Color:        col,
+		Description:         desc,
+		SystemPrompt:        prompt,
+		SystemPromptReplace: promptReplace,
+		Color:               col,
 	}
 }
 

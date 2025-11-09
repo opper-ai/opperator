@@ -35,11 +35,12 @@ type agentController struct {
 	coreColor  string
 	coreTools  []tooling.Spec
 
-	activeName        string
-	activeDescription string
-	activePrompt      string
-	activeCommands    []protocol.CommandDescriptor
-	activeColor       string
+	activeName          string
+	activeDescription   string
+	activePrompt        string
+	activePromptReplace bool
+	activeCommands      []protocol.CommandDescriptor
+	activeColor         string
 
 	// Focused agent tracking for Builder command inheritance
 	focusedAgentName     string
@@ -124,6 +125,8 @@ func (c *agentController) activeAgentDescription() string { return c.activeDescr
 
 func (c *agentController) activeAgentPrompt() string { return c.activePrompt }
 
+func (c *agentController) activeAgentPromptReplace() bool { return c.activePromptReplace }
+
 func (c *agentController) activeAgentCommandsCopy() []protocol.CommandDescriptor {
 	if len(c.activeCommands) == 0 {
 		return nil
@@ -137,6 +140,7 @@ func (c *agentController) resetActiveAgentState() {
 	c.activeName = ""
 	c.activeDescription = ""
 	c.activePrompt = ""
+	c.activePromptReplace = false
 	c.activeCommands = nil
 	c.activeColor = ""
 	commands.SetLocal(nil)
@@ -260,6 +264,7 @@ func (c *agentController) applyActiveAgent(meta llm.AgentMetadata, persist bool)
 	c.activeName = meta.Name
 	c.activeDescription = meta.Description
 	c.activePrompt = meta.SystemPrompt
+	c.activePromptReplace = meta.SystemPromptReplace
 	c.activeCommands = append([]protocol.CommandDescriptor(nil), meta.Commands...)
 	c.activeColor = meta.Color
 	tooling.BuildAgentCommandTools(meta.Name, c.activeCommands)
@@ -305,7 +310,7 @@ func (c *agentController) updateActiveAgentCommands(agentName string, cmds []pro
 	return true
 }
 
-func (c *agentController) updateActiveAgentMetadata(agentName, description, prompt, color string) bool {
+func (c *agentController) updateActiveAgentMetadata(agentName, description, prompt, color string, promptReplace bool) bool {
 	trimmed := strings.TrimSpace(agentName)
 	if trimmed == "" || !strings.EqualFold(trimmed, strings.TrimSpace(c.activeName)) {
 		return false
@@ -322,6 +327,10 @@ func (c *agentController) updateActiveAgentMetadata(agentName, description, prom
 	}
 	if c.activePrompt != metaPrompt {
 		c.activePrompt = metaPrompt
+		changed = true
+	}
+	if c.activePromptReplace != promptReplace {
+		c.activePromptReplace = promptReplace
 		changed = true
 	}
 	if newColor != "" && c.activeColor != newColor {

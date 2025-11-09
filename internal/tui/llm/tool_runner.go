@@ -292,7 +292,7 @@ func runLocalAgentToolProgressive(ctx context.Context, arguments string, progres
 		if resolvedAgentID == "" {
 			resolvedAgentID = strings.TrimSpace(agentParameter)
 		}
-		instructions = remoteAgentInstructions(meta.SystemPrompt, agentDisplay)
+		instructions = remoteAgentInstructions(meta.SystemPrompt, meta.SystemPromptReplace, agentDisplay)
 	}
 	if strings.TrimSpace(instructions) == "" {
 		instructions = builderAgentInstructions()
@@ -491,10 +491,13 @@ func builderAgentInstructions() string {
 	return "You are a focused helper agent. Use the provided tools when necessary and respond succinctly."
 }
 
-func remoteAgentInstructions(systemPrompt, agentName string) string {
+func remoteAgentInstructions(systemPrompt string, replace bool, agentName string) string {
 	trimmed := strings.TrimSpace(systemPrompt)
 	if trimmed == "" {
 		return fmt.Sprintf("You are the managed agent \"%s\". Use the provided command tools to fulfill the user's request and respond succinctly.", strings.TrimSpace(agentName))
+	}
+	if replace {
+		return trimmed
 	}
 	var b strings.Builder
 	b.WriteString(trimmed)

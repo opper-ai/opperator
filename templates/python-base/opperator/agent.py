@@ -163,11 +163,16 @@ class OpperatorAgent(ABC):
                 definition = CommandDefinition(name=name)
             yield definition.normalized()
 
-    def set_system_prompt(self, prompt: Optional[str]) -> None:
-        """Set the system prompt that should guide the managed agent."""
+    def set_system_prompt(self, prompt: Optional[str], *, replace: bool = False) -> None:
+        """Set the system prompt that should guide the managed agent.
+
+        Args:
+            prompt: The instructions to provide to the LLM.
+            replace: When True, replace Opperator's base system prompt entirely.
+        """
 
         self._system_prompt = (prompt or "").strip()
-        Protocol.send_system_prompt(self._system_prompt)
+        Protocol.send_system_prompt(self._system_prompt, replace=replace)
 
     def set_description(self, description: Optional[str]) -> None:
         """Publish a human-readable description for the managed agent."""
