@@ -368,14 +368,22 @@ func (m *Model) handleAsyncTasksSnapshot(msg asyncTasksSnapshotMsg) tea.Cmd {
 						cmds = append(cmds, cmd)
 					}
 					if displayLabel != "" {
-						m.messages.SetToolDisplay(callID, toolstate.ExecutionDisplay{Label: displayLabel})
+						if cmd := m.messages.SetToolDisplay(callID, toolstate.ExecutionDisplay{Label: displayLabel}); cmd != nil {
+							cmds = append(cmds, cmd)
+						}
 					}
-					m.messages.SetToolFlags(callID, asyncFlagsForTask(task))
+					if cmd := m.messages.SetToolFlags(callID, asyncFlagsForTask(task)); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 					if lifecycle := lifecycleFromAsyncStatus(task.Status, false); lifecycle != toolstate.LifecycleUnknown {
-						m.messages.SetToolLifecycle(callID, lifecycle)
+						if cmd := m.messages.SetToolLifecycle(callID, lifecycle); cmd != nil {
+							cmds = append(cmds, cmd)
+						}
 					}
 					if len(task.Progress) > 0 {
-						m.messages.SetToolProgress(callID, progressEntriesFromAsync(task.Progress))
+						if cmd := m.messages.SetToolProgress(callID, progressEntriesFromAsync(task.Progress)); cmd != nil {
+							cmds = append(cmds, cmd)
+						}
 						m.asyncProgressSeen[callID] = len(task.Progress)
 						if cmd := m.refreshToolDetail(callID); cmd != nil {
 							cmds = append(cmds, cmd)
@@ -581,16 +589,24 @@ func (m *Model) handleAsyncToolUpdate(msg llm.AsyncToolUpdateMsg) tea.Cmd {
 			if m.applyProgressEntries(callID, msg.Progress) {
 				progressUpdated = true
 			}
-			m.messages.SetToolLifecycle(callID, toolstate.LifecycleRunning)
+			if cmd := m.messages.SetToolLifecycle(callID, toolstate.LifecycleRunning); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 		if task := msg.Task; task != nil {
 			m.asyncProgressSeen[callID] = len(task.Progress)
-			m.messages.SetToolFlags(callID, asyncFlagsForTask(*task))
+			if cmd := m.messages.SetToolFlags(callID, asyncFlagsForTask(*task)); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			if lifecycle := lifecycleFromAsyncStatus(task.Status, false); lifecycle != toolstate.LifecycleUnknown {
-				m.messages.SetToolLifecycle(callID, lifecycle)
+				if cmd := m.messages.SetToolLifecycle(callID, lifecycle); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			if len(task.Progress) > 0 {
-				m.messages.SetToolProgress(callID, progressEntriesFromAsync(task.Progress))
+				if cmd := m.messages.SetToolProgress(callID, progressEntriesFromAsync(task.Progress)); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 				progressUpdated = true
 			}
 			m.messages.UpdateToolResultMeta(callID, func(meta map[string]any) map[string]any {
@@ -718,6 +734,12 @@ func (m *Model) scheduleAsyncAgentCommand(agentName string, desc protocol.Comman
 	var cmds []tea.Cmd
 	if m.messages != nil {
 		if cmd := m.messages.EnsureToolCall(call); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if cmd := m.messages.SetToolFlags(callID, toolstate.ExecutionFlags{Async: true}); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if cmd := m.messages.SetToolLifecycle(callID, toolstate.LifecyclePending); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}

@@ -168,8 +168,6 @@ func (at *AnimationTracker) TrackAppendedItem(idx int, cmp MessageCmp) tea.Cmd {
 	return at.InitializeItem(idx, cmp)
 }
 
-// UpdateAfterEntryChange re-tracks an item after its entry data has changed.
-// Returns an Init() command if animation state transitioned from off to on.
 func (at *AnimationTracker) UpdateAfterEntryChange(idx int, cmp MessageCmp, wasAnimating bool) tea.Cmd {
 	if idx < 0 || cmp == nil {
 		return nil
@@ -184,9 +182,13 @@ func (at *AnimationTracker) UpdateAfterEntryChange(idx int, cmp MessageCmp, wasA
 	nowAnimating := toolCmp.Animating()
 	at.Track(idx, cmp)
 
-	if nowAnimating && !wasAnimating {
-		return at.InitializeItem(idx, cmp)
+	if nowAnimating {
+		at.ensureMaps()
+		if _, initialized := at.initializedItems[idx]; !initialized {
+			return at.InitializeItem(idx, cmp)
+		}
 	}
+
 	return nil
 }
 

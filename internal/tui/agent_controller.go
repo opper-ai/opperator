@@ -23,6 +23,7 @@ import (
 	tooling "tui/tools"
 	toolregistry "tui/tools/registry"
 	tooltypes "tui/tools/types"
+	"tui/toolstate"
 	"tui/util"
 )
 
@@ -1014,8 +1015,23 @@ func (m *Model) handleSlashCommandArgumentParsed(msg slashCommandArgumentParsedM
 		// Record tool calls to storage
 		m.recordAssistantToolCallsForSession(m.sessionID, []tooltypes.Call{call}, "")
 
-		// Add the pending tool call to messages
-		m.messages.AddOrReplaceToolCall(call)
+		var cmds []tea.Cmd
+		if cmd := m.messages.AddOrReplaceToolCall(call); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+		if msg.isAsync {
+			if cmd := m.messages.SetToolFlags(msg.callID, toolstate.ExecutionFlags{Async: true}); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if cmd := m.messages.SetToolLifecycle(msg.callID, toolstate.LifecyclePending); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+		if len(cmds) > 0 {
+			return tea.Batch(cmds...)
+		}
 		return nil
 	}
 

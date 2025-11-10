@@ -1010,52 +1010,52 @@ func (c *Messages) SetToolReason(id string, reason string) {
 	c.applyExistingToolEntry(entry, changed)
 }
 
-func (c *Messages) SetToolLifecycle(id string, lifecycle toolstate.Lifecycle) {
+func (c *Messages) SetToolLifecycle(id string, lifecycle toolstate.Lifecycle) tea.Cmd {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return
+		return nil
 	}
 	entry, changed := c.toolStore.SetLifecycle(id, lifecycle)
 	if strings.TrimSpace(entry.Call.ID) == "" {
-		return
+		return nil
 	}
-	c.applyExistingToolEntry(entry, changed)
+	return c.applyExistingToolEntry(entry, changed)
 }
 
-func (c *Messages) SetToolFlags(id string, flags toolstate.ExecutionFlags) {
+func (c *Messages) SetToolFlags(id string, flags toolstate.ExecutionFlags) tea.Cmd {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return
+		return nil
 	}
 	entry, changed := c.toolStore.SetFlags(id, flags)
 	if strings.TrimSpace(entry.Call.ID) == "" {
-		return
+		return nil
 	}
-	c.applyExistingToolEntry(entry, changed)
+	return c.applyExistingToolEntry(entry, changed)
 }
 
-func (c *Messages) SetToolDisplay(id string, display toolstate.ExecutionDisplay) {
+func (c *Messages) SetToolDisplay(id string, display toolstate.ExecutionDisplay) tea.Cmd {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return
+		return nil
 	}
 	entry, changed := c.toolStore.SetDisplay(id, display)
 	if strings.TrimSpace(entry.Call.ID) == "" {
-		return
+		return nil
 	}
-	c.applyExistingToolEntry(entry, changed)
+	return c.applyExistingToolEntry(entry, changed)
 }
 
-func (c *Messages) SetToolProgress(id string, entries []toolstate.ProgressRecord) {
+func (c *Messages) SetToolProgress(id string, entries []toolstate.ProgressRecord) tea.Cmd {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return
+		return nil
 	}
 	entry, changed := c.toolStore.SetProgress(id, entries)
 	if strings.TrimSpace(entry.Call.ID) == "" {
-		return
+		return nil
 	}
-	c.applyExistingToolEntry(entry, changed)
+	return c.applyExistingToolEntry(entry, changed)
 }
 
 func (c *Messages) AppendToolProgress(id string, entries []toolstate.ProgressRecord) {
