@@ -37,7 +37,7 @@ type Agent struct {
 	systemPromptReplace bool
 	description         string
 	color               string
-	customSections      map[string]sidebar.CustomSection
+	sectionStore        *SectionStore
 
 	cmd    *exec.Cmd
 	stdout io.ReadCloser
@@ -72,15 +72,15 @@ type MetadataUpdate struct {
 	Color               string
 }
 
-func NewAgent(config AgentConfig, persistence *AgentPersistence) *Agent {
+func NewAgent(config AgentConfig, persistence *AgentPersistence, sectionStore *SectionStore) *Agent {
 	return &Agent{
-		Config:         config,
-		Status:         StatusStopped,
-		systemPrompt:   strings.TrimSpace(config.SystemPrompt),
-		description:    strings.TrimSpace(config.Description),
-		color:          strings.TrimSpace(config.Color),
-		customSections: make(map[string]sidebar.CustomSection),
-		persistence:    persistence,
+		Config:       config,
+		Status:       StatusStopped,
+		systemPrompt: strings.TrimSpace(config.SystemPrompt),
+		description:  strings.TrimSpace(config.Description),
+		color:        strings.TrimSpace(config.Color),
+		sectionStore: sectionStore,
+		persistence:  persistence,
 	}
 }
 
@@ -242,7 +242,11 @@ func (a *Agent) stop(preserveRunningState bool) error {
 	a.mu.Lock()
 	a.Status = StatusStopped
 	a.PID = 0
-	a.customSections = make(map[string]sidebar.CustomSection)
+
+	// Clear sections for this agent from the store
+	if a.sectionStore != nil {
+		a.sectionStore.ClearAgent(a.Config.Name)
+	}
 
 	notifier := a.stateChangeNotifier
 	agentName := a.Config.Name
@@ -473,21 +477,18 @@ func (a *Agent) setupProtocol() {
 				return
 			}
 
-			a.mu.Lock()
-			a.customSections[sectionID] = sidebar.CustomSection{
+			// Save to section store (cached + persisted)
+			sec := sidebar.CustomSection{
 				ID:        sectionID,
 				Title:     section.Title,
 				Content:   section.Content,
 				Collapsed: section.Collapsed,
 			}
-			sections := make([]sidebar.CustomSection, 0, len(a.customSections))
-			for _, s := range a.customSections {
-				sections = append(sections, s)
-			}
-			a.mu.Unlock()
+			a.sectionStore.SaveSection(a.Config.Name, sectionID, sec)
 
 			// Notify about sections change
 			if a.stateChangeNotifier != nil {
+				sections := a.sectionStore.GetSections(a.Config.Name)
 				a.stateChangeNotifier(a.Config.Name, "sections", sections)
 			}
 		},
@@ -497,16 +498,12 @@ func (a *Agent) setupProtocol() {
 				return
 			}
 
-			a.mu.Lock()
-			delete(a.customSections, sectionID)
-			sections := make([]sidebar.CustomSection, 0, len(a.customSections))
-			for _, s := range a.customSections {
-				sections = append(sections, s)
-			}
-			a.mu.Unlock()
+			// Remove from section store
+			a.sectionStore.DeleteSection(a.Config.Name, sectionID)
 
 			// Notify about sections change
 			if a.stateChangeNotifier != nil {
+				sections := a.sectionStore.GetSections(a.Config.Name)
 				a.stateChangeNotifier(a.Config.Name, "sections", sections)
 			}
 		},
@@ -661,14 +658,7 @@ func (a *Agent) Description() string {
 }
 
 func (a *Agent) CustomSections() []sidebar.CustomSection {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	sections := make([]sidebar.CustomSection, 0, len(a.customSections))
-	for _, section := range a.customSections {
-		sections = append(sections, section)
-	}
-	return sections
+	return a.sectionStore.GetSections(a.Config.Name)
 }
 
 func (a *Agent) Color() string {

@@ -15,6 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"opperator/internal/protocol"
 	"opperator/pkg/migration"
+	"tui/components/sidebar"
 
 	_ "modernc.org/sqlite"
 )
@@ -29,6 +30,7 @@ type Manager struct {
 	stopWatching  chan struct{}
 	lastModTime   time.Time
 	persistence   *AgentPersistence
+	sectionStore  *SectionStore
 	onStateChange StateChangeCallback
 }
 
@@ -64,6 +66,15 @@ func New(configPath string) (*Manager, error) {
 
 	persistence := NewAgentPersistence(configDir, db)
 
+	// Initialize section store for persisting custom sections using shared DB
+	sectionStore, err := NewSectionStore(db, SectionStoreConfig{
+		FlushInterval: 5 * time.Second,
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize section store: %w", err)
+	}
+
 	m := &Manager{
 		agents:       make(map[string]*Agent),
 		config:       config,
@@ -71,13 +82,14 @@ func New(configPath string) (*Manager, error) {
 		stopWatching: make(chan struct{}),
 		lastModTime:  modTime,
 		persistence:  persistence,
+		sectionStore: sectionStore,
 	}
 
 	for _, agentConfig := range config.Agents {
 		if agentConfig.MaxRestarts == 0 && agentConfig.AutoRestart {
 			agentConfig.MaxRestarts = 3
 		}
-		agent := NewAgent(agentConfig, persistence)
+		agent := NewAgent(agentConfig, persistence, sectionStore)
 
 		agent.stateChangeNotifier = m.notifyStateChange
 
@@ -136,6 +148,28 @@ func (m *Manager) GetAllAgents() []*Agent {
 	}
 
 	return agents
+}
+
+// GetAllAgentSections returns persisted custom sections for all agents
+func (m *Manager) GetAllAgentSections() map[string][]sidebar.CustomSection {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string][]sidebar.CustomSection)
+
+	if m.sectionStore == nil {
+		return result
+	}
+
+	// Get sections for all agents that exist in the config
+	for _, agentConfig := range m.config.Agents {
+		sections := m.sectionStore.GetSections(agentConfig.Name)
+		if len(sections) > 0 {
+			result[agentConfig.Name] = sections
+		}
+	}
+
+	return result
 }
 
 func (m *Manager) StartAgent(name string) error {
@@ -317,6 +351,11 @@ func (m *Manager) Cleanup() {
 	close(m.stopWatching)
 
 	m.StopAll()
+
+	// Close section store (flushes any pending writes)
+	if m.sectionStore != nil {
+		m.sectionStore.Close()
+	}
 }
 
 func (m *Manager) GetPreviouslyRunningAgents() []string {
@@ -348,7 +387,7 @@ func (m *Manager) AddAgent(config AgentConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	agent := NewAgent(config, m.persistence)
+	agent := NewAgent(config, m.persistence, m.sectionStore)
 	agent.stateChangeNotifier = m.notifyStateChange
 	// Restore persistent data
 	if m.persistence != nil {
@@ -500,7 +539,7 @@ func (m *Manager) ReloadConfig() error {
 
 					// If non-metadata config changed, create new agent
 					if configChanged {
-						agent := NewAgent(newAgent, m.persistence)
+						agent := NewAgent(newAgent, m.persistence, m.sectionStore)
 						agent.stateChangeNotifier = m.notifyStateChange
 						// Restore persistent data
 						if m.persistence != nil {
@@ -540,7 +579,7 @@ func (m *Manager) ReloadConfig() error {
 			}
 		} else {
 			log.Printf("Adding new agent: %s", name)
-			agent := NewAgent(newAgent, m.persistence)
+			agent := NewAgent(newAgent, m.persistence, m.sectionStore)
 			agent.stateChangeNotifier = m.notifyStateChange
 			// Restore persistent data
 			if m.persistence != nil {

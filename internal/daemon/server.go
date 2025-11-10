@@ -405,22 +405,35 @@ func (s *Server) streamAgentState(conn net.Conn, req ipc.Request) {
 		}
 	}
 
-	// Stream events
 	encoder := json.NewEncoder(conn)
-	eventCount := 0
-	for ev := range events {
-		eventCount++
-		log.Printf("[AgentStateStream] Streaming event #%d: type=%s, agent=%s", eventCount, ev.Type, ev.AgentName)
-		if ev.Type == AgentStateSections && len(ev.CustomSections) > 0 {
-			log.Printf("[AgentStateStream] Event contains %d custom sections", len(ev.CustomSections))
+
+	// Send initial snapshot of persisted custom sections for all agents
+	if s.manager != nil {
+		allSections := s.manager.GetAllAgentSections()
+		for agentName, sections := range allSections {
+			if len(sections) > 0 {
+				payload := convertAgentStateEvent(AgentStateChange{
+					Type:           AgentStateSections,
+					AgentName:      agentName,
+					CustomSections: sections,
+				})
+				if err := encoder.Encode(payload); err != nil {
+					log.Printf("[AgentStateStream] Failed to send initial sections: %v", err)
+					return
+				}
+			}
 		}
+	}
+
+	// Stream events
+	for ev := range events {
 		payload := convertAgentStateEvent(ev)
 		if err := encoder.Encode(payload); err != nil {
 			log.Printf("[AgentStateStream] Failed to encode/send event: %v", err)
 			return
 		}
 	}
-	log.Printf("[AgentStateStream] Client disconnected after receiving %d events", eventCount)
+	log.Printf("[AgentStateStream] Client disconnected")
 }
 
 func (s *Server) streamAllTasks(conn net.Conn, req ipc.Request) {
