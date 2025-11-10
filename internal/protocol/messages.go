@@ -31,7 +31,8 @@ const (
 	MsgCommandProgress  MessageType = "command_progress"
 
 	// Sidebar messages
-	MsgSidebarSection MessageType = "sidebar_section"
+	MsgSidebarSection        MessageType = "sidebar_section"
+	MsgSidebarSectionRemoval MessageType = "sidebar_section_removal"
 
 	// Error messages
 	MsgError MessageType = "error"
@@ -110,6 +111,11 @@ type SidebarSectionMessage struct {
 	Title     string `json:"title"`
 	Content   string `json:"content"`
 	Collapsed bool   `json:"collapsed"`
+}
+
+// SidebarSectionRemovalMessage allows an agent to remove a custom sidebar section.
+type SidebarSectionRemovalMessage struct {
+	SectionID string `json:"section_id"`
 }
 
 // CommandExposure indicates how a command should be exposed to users.

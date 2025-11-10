@@ -357,9 +357,10 @@ type DefaultHandlers struct {
 	OnResponse        func(resp *ResponseMessage)
 	OnSystemPrompt    func(prompt string, replace bool)
 	OnDescription     func(description string)
-	OnCommandRegistry func(commands []CommandDescriptor)
-	OnCommandProgress func(progress CommandProgressMessage)
-	OnSidebarSection  func(section SidebarSectionMessage)
+	OnCommandRegistry       func(commands []CommandDescriptor)
+	OnCommandProgress       func(progress CommandProgressMessage)
+	OnSidebarSection        func(section SidebarSectionMessage)
+	OnSidebarSectionRemoval func(sectionID string)
 }
 
 // RegisterDefaults registers the default handlers
@@ -470,6 +471,17 @@ func (p *ProcessProtocol) RegisterDefaults(handlers *DefaultHandlers) {
 				return err
 			}
 			handlers.OnSidebarSection(data)
+			return nil
+		})
+	}
+
+	if handlers.OnSidebarSectionRemoval != nil {
+		p.RegisterHandlerFunc(MsgSidebarSectionRemoval, func(msg *Message) error {
+			var data SidebarSectionRemovalMessage
+			if err := msg.ExtractData(&data); err != nil {
+				return err
+			}
+			handlers.OnSidebarSectionRemoval(data.SectionID)
 			return nil
 		})
 	}

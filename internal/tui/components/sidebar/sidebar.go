@@ -172,6 +172,16 @@ func (s *Sidebar) SetTodos(todos []TodoItem) {
 func (s *Sidebar) SetCustomSections(sections []CustomSection) {
 	changed := s.sections.SetCustomSections(sections, s.prefsStore)
 	if changed {
+		// Clean up viewports for removed sections
+		currentSectionIDs := make(map[string]struct{}, len(sections))
+		for i := range sections {
+			currentSectionIDs[sections[i].ID] = struct{}{}
+		}
+		for sectionID := range s.customViewports {
+			if _, exists := currentSectionIDs[sectionID]; !exists {
+				delete(s.customViewports, sectionID)
+			}
+		}
 		s.validateAndFixSelection()
 	}
 }

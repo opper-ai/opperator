@@ -491,6 +491,25 @@ func (a *Agent) setupProtocol() {
 				a.stateChangeNotifier(a.Config.Name, "sections", sections)
 			}
 		},
+		OnSidebarSectionRemoval: func(sectionID string) {
+			sectionID = strings.TrimSpace(sectionID)
+			if sectionID == "" {
+				return
+			}
+
+			a.mu.Lock()
+			delete(a.customSections, sectionID)
+			sections := make([]sidebar.CustomSection, 0, len(a.customSections))
+			for _, s := range a.customSections {
+				sections = append(sections, s)
+			}
+			a.mu.Unlock()
+
+			// Notify about sections change
+			if a.stateChangeNotifier != nil {
+				a.stateChangeNotifier(a.Config.Name, "sections", sections)
+			}
+		},
 		OnCommandRegistry: func(commands []protocol.CommandDescriptor) {
 			normalized := protocol.NormalizeCommandDescriptors(commands)
 			if len(normalized) == 0 {

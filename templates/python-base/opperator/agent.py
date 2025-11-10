@@ -156,6 +156,31 @@ class OpperatorAgent(ABC):
         )
         self._publish_command_registry()
 
+    def unregister_command(self, name: str) -> bool:
+        """Unregister a previously registered command.
+
+        Args:
+            name: The name of the command to unregister
+
+        Returns:
+            True if the command was successfully unregistered, False if it didn't exist
+        """
+        command_name = self._normalize_command_name(name)
+
+        if command_name not in self._command_handlers:
+            self.log(
+                LogLevel.WARNING,
+                f"Attempted to unregister non-existent command: {command_name}"
+            )
+            return False
+
+        del self._command_handlers[command_name]
+        del self._command_metadata[command_name]
+        del self._argument_schemas[command_name]
+
+        self._publish_command_registry()
+        return True
+
     def _command_definitions(self) -> Iterable[CommandDefinition]:
         for name in sorted(self._command_handlers.keys()):
             definition = self._command_metadata.get(name)
@@ -242,6 +267,30 @@ class OpperatorAgent(ABC):
             content,
             section['collapsed']
         )
+
+    def unregister_section(self, section_id: str) -> bool:
+        """Unregister a previously registered sidebar section.
+
+        Args:
+            section_id: The ID of the section to unregister
+
+        Returns:
+            True if the section was successfully unregistered, False if it didn't exist
+        """
+        section_id = str(section_id or "").strip()
+        if not section_id:
+            raise ValueError("section_id cannot be empty")
+
+        if section_id not in self._sidebar_sections:
+            self.log(
+                LogLevel.WARNING,
+                f"Attempted to unregister non-existent section: {section_id}"
+            )
+            return False
+
+        del self._sidebar_sections[section_id]
+        Protocol.send_sidebar_section_removal(section_id)
+        return True
 
     def _parse_exposures(
         self, expose_as: Optional[Sequence[CommandExposure]]

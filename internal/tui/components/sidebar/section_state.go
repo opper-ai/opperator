@@ -150,6 +150,26 @@ func (s *SectionState) SetCustomSections(sections []CustomSection, prefsStore Pr
 
 	s.CustomSections = sortedSections
 
+	// Clean up maps for removed sections
+	currentSectionIDs := make(map[string]struct{}, len(s.CustomSections))
+	for i := range s.CustomSections {
+		currentSectionIDs[s.CustomSections[i].ID] = struct{}{}
+	}
+
+	// Remove expanded state for sections that no longer exist
+	for sectionID := range s.CustomSectionsExpanded {
+		if _, exists := currentSectionIDs[sectionID]; !exists {
+			delete(s.CustomSectionsExpanded, sectionID)
+		}
+	}
+
+	// Remove order tracking for sections that no longer exist
+	for sectionID := range s.CustomSectionsOrder {
+		if _, exists := currentSectionIDs[sectionID]; !exists {
+			delete(s.CustomSectionsOrder, sectionID)
+		}
+	}
+
 	// Load expanded state from preferences
 	if prefsStore != nil {
 		ctx := context.Background()

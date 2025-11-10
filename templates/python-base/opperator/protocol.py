@@ -30,6 +30,7 @@ class MessageType(str, Enum):
 
     # Sidebar messages
     SIDEBAR_SECTION = "sidebar_section"
+    SIDEBAR_SECTION_REMOVAL = "sidebar_section_removal"
 
     # Error messages
     ERROR = "error"
@@ -488,6 +489,18 @@ class SidebarSectionMessage:
 
 
 @dataclass
+class SidebarSectionRemovalMessage:
+    """Message to remove a custom sidebar section."""
+
+    section_id: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'section_id': str(self.section_id).strip()
+        }
+
+
+@dataclass
 class ErrorMessage:
     """Error reporting message"""
     error: str
@@ -616,6 +629,13 @@ class Protocol:
             collapsed=collapsed
         )
         Protocol.send_message(MessageType.SIDEBAR_SECTION, msg.to_dict())
+
+    @staticmethod
+    def send_sidebar_section_removal(section_id: str) -> None:
+        """Remove a custom sidebar section."""
+
+        msg = SidebarSectionRemovalMessage(section_id=section_id)
+        Protocol.send_message(MessageType.SIDEBAR_SECTION_REMOVAL, msg.to_dict())
 
     @staticmethod
     def read_message() -> Optional[Message]:

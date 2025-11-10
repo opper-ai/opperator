@@ -177,7 +177,7 @@ func (m *Model) watchSingleDaemon(ctx context.Context, daemonName string, eventC
 		}
 
 		// Convert custom sections
-		var sections []cmpsidebar.CustomSection
+		sections := make([]cmpsidebar.CustomSection, 0)
 		if event.CustomSections != nil {
 			if sectionsData, ok := event.CustomSections.([]interface{}); ok {
 				for _, s := range sectionsData {
