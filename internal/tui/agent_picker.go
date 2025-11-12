@@ -815,6 +815,11 @@ func (m *Model) handleCycleAgentResult(msg cycleAgentResultMsg) tea.Cmd {
 		cmds = append(cmds, util.ReportWarn(msg.warn))
 	}
 
+	// Clear custom sections before switching agents to prevent stale sections from persisting
+	if m.sidebar != nil {
+		m.sidebar.SetCustomSections(nil)
+	}
+
 	_ = m.refreshSidebar()
 	m.refreshHeaderMeta()
 

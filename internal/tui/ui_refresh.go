@@ -133,16 +133,14 @@ func (m *Model) refreshSidebar() tea.Cmd {
 		description := m.currentActiveAgentDescription()
 		color := m.currentActiveAgentColor()
 		commands := m.currentActiveAgentCommands()
-		_, agentNameChanged := m.sidebar.SetAgentInfo(activeName, description, color, commands)
+		_, _ = m.sidebar.SetAgentInfo(activeName, description, color, commands)
 
-		// If the agent name changed, fetch logs and custom sections for the new agent
-		if agentNameChanged {
-			return tea.Batch(
-				m.fetchInitialAgentLogsCmd(activeName),
-				m.fetchInitialCustomSectionsCmd(activeName),
-			)
-		}
-		// Custom sections are now updated via events only (no polling)
+		// Always fetch logs and custom sections to ensure fresh data when switching agents
+		// This prevents stale sections from persisting when an agent doesn't update its section list
+		return tea.Batch(
+			m.fetchInitialAgentLogsCmd(activeName),
+			m.fetchInitialCustomSectionsCmd(activeName),
+		)
 	} else {
 		if coreID == coreagent.IDOpperator {
 			// Show Opperator info in sidebar
