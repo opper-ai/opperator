@@ -9,7 +9,6 @@
 ![Opperator demo](https://github.com/user-attachments/assets/657b4eee-4b1a-43ff-b49d-12ef34cb84c1)
 
 </br>
-</br>
 
 [![Documentation](https://img.shields.io/badge/docs-docs.opper.ai-14cdcd.svg)](https://docs.opper.ai/opperator)
 [![License](https://img.shields.io/badge/license-Apache%20License%202.0-blue)](LICENSE)
