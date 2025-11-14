@@ -100,7 +100,7 @@ type StreamRequest struct {
 // StreamingChunk is the data payload from the server in each SSE event.
 // It supports different chunk types with varying fields.
 type StreamingChunk struct {
-	Delta     string `json:"delta"`
+	Delta     any    `json:"delta"` // Can be string, number, bool, or other JSON-compatible type
 	SpanID    string `json:"span_id,omitempty"`
 	JSONPath  string `json:"json_path,omitempty"`
 	ChunkType string `json:"chunk_type,omitempty"`

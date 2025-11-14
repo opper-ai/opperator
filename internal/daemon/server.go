@@ -322,6 +322,12 @@ func (s *Server) handleConnectionAuthenticated(conn net.Conn, connID string, rea
 			return
 		}
 
+		if req.Type == ipc.RequestCommand {
+			log.Printf("[%s] Handling command request with progress streaming", connID)
+			s.handleCommandWithProgress(conn, req)
+			continue
+		}
+
 		resp := s.processRequest(req)
 		b, _ := ipc.EncodeResponse(resp)
 		_, _ = conn.Write(append(b, '\n'))
@@ -371,6 +377,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 			log.Printf("[Connection %s] Switching to task streaming mode", connID)
 			s.streamAllTasks(conn, req)
 			return
+		}
+
+		if req.Type == ipc.RequestCommand {
+			log.Printf("[Connection %s] Handling command request with progress streaming", connID)
+			s.handleCommandWithProgress(conn, req)
+			continue
 		}
 
 		resp := s.processRequest(req)
@@ -563,6 +575,48 @@ func (s *Server) shutdown() ipc.Response {
 }
 
 // processRequest routes requests to the appropriate handlers.
+func (s *Server) handleCommandWithProgress(conn net.Conn, req ipc.Request) {
+	if req.Command == "" {
+		resp := ipc.Response{Success: false, Error: "command is required"}
+		b, _ := ipc.EncodeResponse(resp)
+		conn.Write(append(b, '\n'))
+		return
+	}
+
+	// Store invocation directory for future agent starts
+	if req.WorkingDir != "" {
+		s.setInvocationDir(req.WorkingDir)
+	}
+
+	// Use InvokeCommandAsync to get progress updates
+	resp, err := s.manager.InvokeCommandAsync(req.AgentName, req.Command, req.Args, req.WorkingDir, 30*time.Minute, func(prog protocol.CommandProgressMessage) {
+		// Send progress message to client
+		progressResp := ipc.Response{
+			Success:  true,
+			Progress: &prog,
+		}
+		b, _ := ipc.EncodeResponse(progressResp)
+		conn.Write(append(b, '\n'))
+	})
+
+	// Send final response
+	if err != nil {
+		finalResp := ipc.Response{Success: false, Error: err.Error()}
+		b, _ := ipc.EncodeResponse(finalResp)
+		conn.Write(append(b, '\n'))
+		return
+	}
+
+	cmdResp := &ipc.CommandResponse{
+		Success: resp.Success,
+		Error:   resp.Error,
+		Result:  resp.Result,
+	}
+	finalResp := ipc.Response{Success: true, Command: cmdResp}
+	b, _ := ipc.EncodeResponse(finalResp)
+	conn.Write(append(b, '\n'))
+}
+
 func (s *Server) processRequest(req ipc.Request) ipc.Response {
 	switch req.Type {
 	case ipc.RequestListAgents:

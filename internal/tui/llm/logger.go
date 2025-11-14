@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tui/internal/opper"
+	"tui/opper"
 	tooltypes "tui/tools/types"
 )
 

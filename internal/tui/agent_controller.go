@@ -16,7 +16,7 @@ import (
 	"tui/commands"
 	"tui/coreagent"
 	"tui/internal/conversation"
-	"tui/internal/opper"
+	internalopper "tui/internal/opper"
 	"tui/internal/protocol"
 	llm "tui/llm"
 	"tui/sessionstate"
@@ -963,7 +963,7 @@ func parseSlashCommandArgumentsCmd(agent, command, rawInput string, schema []pro
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			args, err := opper.ParseCommandArguments(ctx, rawInput, schema)
+			args, err := internalopper.ParseCommandArguments(ctx, rawInput, schema)
 			return slashCommandArgumentParsedMsg{
 				agent:    agent,
 				command:  command,

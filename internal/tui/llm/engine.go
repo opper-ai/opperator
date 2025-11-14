@@ -13,7 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 
 	"tui/internal/keyring"
-	"tui/internal/opper"
+	"tui/opper"
 	"tui/lsp"
 	"tui/permission"
 	"tui/secretprompt"
@@ -365,21 +365,28 @@ func (e *Engine) streamPhase(
 				path = "text"
 			}
 			aggregator.Add(path, chunk.Delta)
-			collector.handle(path, chunk.Delta)
 			// Only capture deltas for the "text" field (can be "text" or "result.text")
 			// This excludes meta fields and other non-display content
 			isTextField := path == "text" || strings.HasSuffix(path, ".text")
-			if isTextField && chunk.Delta != "" {
-				res.hadActivity = true
-				textBuilder.WriteString(chunk.Delta)
-				ch <- StreamDeltaMsg{Text: chunk.Delta}
+			if isTextField {
+				if deltaStr, ok := chunk.Delta.(string); ok && deltaStr != "" {
+					res.hadActivity = true
+					collector.handle(path, deltaStr)
+					textBuilder.WriteString(deltaStr)
+					ch <- StreamDeltaMsg{Text: deltaStr}
+				}
+			} else {
+				// For non-text fields, still handle the delta if it's a string
+				if deltaStr, ok := chunk.Delta.(string); ok {
+					collector.handle(path, deltaStr)
+				}
 			}
 			continue
 		}
-		if chunk.Delta != "" {
+		if deltaStr, ok := chunk.Delta.(string); ok && deltaStr != "" {
 			res.hadActivity = true
-			textBuilder.WriteString(chunk.Delta)
-			ch <- StreamDeltaMsg{Text: chunk.Delta}
+			textBuilder.WriteString(deltaStr)
+			ch <- StreamDeltaMsg{Text: deltaStr}
 		}
 	}
 

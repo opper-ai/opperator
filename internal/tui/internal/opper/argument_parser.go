@@ -8,6 +8,7 @@ import (
 
 	"tui/internal/keyring"
 	"tui/internal/protocol"
+	opperclient "tui/opper"
 )
 
 // ParseCommandArguments uses an LLM to parse a raw slash command
@@ -59,8 +60,8 @@ Extract the values from the user input and return them as a JSON object. For mis
 
 Be flexible in interpreting the input - users may provide values in various formats or orders. Extract the intended meaning.`, schemaDescription)
 
-	client := New(apiKey)
-	req := StreamRequest{
+	client := opperclient.New(apiKey)
+	req := opperclient.StreamRequest{
 		Name:         "opperator.slash_command_parser",
 		Instructions: &instructions,
 		Input: map[string]any{
@@ -76,7 +77,7 @@ Be flexible in interpreting the input - users may provide values in various form
 	}
 
 	// Aggregate the JSON chunks
-	aggregator := NewJSONChunkAggregator()
+	aggregator := opperclient.NewJSONChunkAggregator()
 	for event := range events {
 		chunk := event.Data
 		if chunk.JSONPath != "" || chunk.ChunkType == "json" {

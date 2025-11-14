@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"tui/internal/keyring"
-	"tui/internal/opper"
+	"tui/opper"
 	"tui/lsp"
 	"tui/permission"
 	"tui/secretprompt"
@@ -338,12 +338,14 @@ func runLocalAgentToolProgressive(ctx context.Context, arguments string, progres
 				}
 				aggregator.Add(path, chunk.Delta)
 				if path == "text" {
-					textBuilder.WriteString(chunk.Delta)
+					if deltaStr, ok := chunk.Delta.(string); ok {
+						textBuilder.WriteString(deltaStr)
+					}
 				}
 				continue
 			}
-			if chunk.Delta != "" {
-				textBuilder.WriteString(chunk.Delta)
+			if deltaStr, ok := chunk.Delta.(string); ok && deltaStr != "" {
+				textBuilder.WriteString(deltaStr)
 			}
 		}
 

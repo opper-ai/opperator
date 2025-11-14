@@ -868,6 +868,31 @@ var versionUpdateCmd = &cobra.Command{
 	},
 }
 
+var execCmd = &cobra.Command{
+	Use:   "exec [message]",
+	Short: "Send a message to an agent and get the response",
+	Long: `Send a message to an agent and receive the response.
+
+Activity is streamed to stderr, while the final assistant response is written to stdout.
+This allows piping the output to other commands while still seeing progress.
+
+Examples:
+  op exec "What is the weather today?" --agent weather-bot
+  op exec "Continue our discussion" --resume 1234567890
+  op exec "Hello" --agent assistant | jq -r .`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		message := args[0]
+		agentName, _ := cmd.Flags().GetString("agent")
+		conversationID, _ := cmd.Flags().GetString("resume")
+
+		if err := cli.ExecMessage(message, agentName, conversationID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func startTUICPUProfile(path string) (func(), error) {
 	file, err := os.Create(path)
 	if err != nil {
@@ -982,6 +1007,10 @@ func init() {
 	versionCmd.AddCommand(versionCheckCmd)
 	versionCmd.AddCommand(versionUpdateCmd)
 
+	// Add exec command flags
+	execCmd.Flags().String("agent", "", "Name of the agent to send the message to")
+	execCmd.Flags().String("resume", "", "Resume an existing conversation by ID")
+
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(doctorCmd)
@@ -989,6 +1018,7 @@ func init() {
 	rootCmd.AddCommand(asyncCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(cloudCmd)
+	rootCmd.AddCommand(execCmd)
 	// Add hidden commands (needed internally but not shown to users)
 	rootCmd.AddCommand(daemonCmd)
 }

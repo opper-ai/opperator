@@ -12,24 +12,41 @@ import (
 // final JSON document. It mirrors the helper used by the reference Opper agent
 // implementation so we can decode partial streaming payloads.
 type JSONChunkAggregator struct {
-	chunks map[string]*strings.Builder
+	chunks     map[string]any              // Stores the actual value (string, number, bool, etc.)
+	textChunks map[string]*strings.Builder // For text that arrives in multiple chunks
 }
 
 func NewJSONChunkAggregator() *JSONChunkAggregator {
-	return &JSONChunkAggregator{chunks: make(map[string]*strings.Builder)}
+	return &JSONChunkAggregator{
+		chunks:     make(map[string]any),
+		textChunks: make(map[string]*strings.Builder),
+	}
 }
 
 // Add appends a JSON path delta to the aggregator.
-func (a *JSONChunkAggregator) Add(path, delta string) {
-	if path == "" || delta == "" {
+// Delta can be a string, number, boolean, or other JSON-compatible type.
+func (a *JSONChunkAggregator) Add(path string, delta any) {
+	if path == "" || delta == nil {
 		return
 	}
-	b := a.chunks[path]
-	if b == nil {
-		b = &strings.Builder{}
-		a.chunks[path] = b
+
+	// If delta is a string, it might arrive in multiple chunks, so accumulate it
+	if str, ok := delta.(string); ok {
+		if str == "" {
+			return
+		}
+		b := a.textChunks[path]
+		if b == nil {
+			b = &strings.Builder{}
+			a.textChunks[path] = b
+		}
+		b.WriteString(str)
+		a.chunks[path] = b.String()
+		return
 	}
-	b.WriteString(delta)
+
+	// For non-string types (numbers, booleans, etc.), store directly
+	a.chunks[path] = delta
 }
 
 // Assemble marshals the aggregated chunk data into a JSON string.
@@ -44,7 +61,7 @@ func (a *JSONChunkAggregator) Assemble() (string, error) {
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		if err := assignJSONPath(root, path, a.chunks[path].String()); err != nil {
+		if err := assignJSONPath(root, path, a.chunks[path]); err != nil {
 			return "", err
 		}
 	}
@@ -98,7 +115,7 @@ func parseJSONPath(path string) ([]jsonPathToken, error) {
 	return tokens, nil
 }
 
-func assignJSONPath(root map[string]any, path string, value string) error {
+func assignJSONPath(root map[string]any, path string, value any) error {
 	tokens, err := parseJSONPath(path)
 	if err != nil {
 		return err

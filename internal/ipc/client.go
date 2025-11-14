@@ -189,6 +189,10 @@ func (c *Client) RestartAgent(name string) error {
 }
 
 func (c *Client) InvokeCommand(name, command string, args map[string]interface{}, timeout time.Duration) (*CommandResponse, error) {
+	return c.InvokeCommandWithProgress(name, command, args, timeout, nil)
+}
+
+func (c *Client) InvokeCommandWithProgress(name, command string, args map[string]interface{}, timeout time.Duration, progressFn func(protocol.CommandProgressMessage)) (*CommandResponse, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
@@ -200,20 +204,60 @@ func (c *Client) InvokeCommand(name, command string, args map[string]interface{}
 		}
 		req.WorkingDir = filepath.Clean(cwd)
 	}
-	resp, err := c.sendRequestWithTimeout(req, timeout)
+
+	// Send the request
+	data, err := EncodeRequest(req)
 	if err != nil {
 		return nil, err
 	}
 
-	if !resp.Success {
-		return nil, fmt.Errorf("%s", resp.Error)
+	c.conn.SetWriteDeadline(time.Now().Add(timeout))
+	_, err = c.conn.Write(append(data, '\n'))
+	if err != nil {
+		return nil, fmt.Errorf("write timeout: %w", err)
 	}
 
-	if resp.Command == nil {
+	// Read responses (may include progress messages)
+	c.conn.SetReadDeadline(time.Now().Add(timeout))
+	scanner := bufio.NewScanner(c.conn)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	var finalResp Response
+	for scanner.Scan() {
+		resp, err := DecodeResponse(scanner.Bytes())
+		if err != nil {
+			continue
+		}
+
+		// Check if this is a progress message
+		if resp.Progress != nil && progressFn != nil {
+			progressFn(*resp.Progress)
+			// Reset deadline to allow more time for next progress update
+			c.conn.SetReadDeadline(time.Now().Add(timeout))
+			continue
+		}
+
+		// This is the final response
+		finalResp = resp
+		break
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read error: %w", err)
+	}
+
+	c.conn.SetDeadline(time.Time{})
+
+	if !finalResp.Success {
+		return nil, fmt.Errorf("%s", finalResp.Error)
+	}
+
+	if finalResp.Command == nil {
 		return nil, fmt.Errorf("missing command response")
 	}
 
-	return resp.Command, nil
+	return finalResp.Command, nil
 }
 
 func (c *Client) ListCommands(name string) ([]protocol.CommandDescriptor, error) {
