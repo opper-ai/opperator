@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"tui/components/sidebar"
 )
 

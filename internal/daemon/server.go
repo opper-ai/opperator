@@ -21,12 +21,12 @@ import (
 	"opperator/internal/ipc"
 	"opperator/internal/protocol"
 	"opperator/internal/taskqueue"
+	"opperator/pkg/db"
 	"opperator/pkg/migration"
 	"tui/components/sidebar"
 	"tui/tools"
 
 	"gopkg.in/yaml.v3"
-	_ "modernc.org/sqlite"
 )
 
 type Server struct {
@@ -94,18 +94,22 @@ func NewServer() (*Server, error) {
 		lock.Release()
 		return nil, err
 	}
-	log.Printf("Opening database: %s", dbPath)
-	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
+	log.Printf("Initializing database: %s", dbPath)
+	if err := db.Initialize(dbPath); err != nil {
+		logFile.Close()
+		lock.Release()
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+
+	writeDB, err := db.GetWriteDB()
 	if err != nil {
 		logFile.Close()
 		lock.Release()
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	migrationRunner := migration.NewRunner(db)
+
+	migrationRunner := migration.NewRunner(writeDB)
 	if err := migrationRunner.Run(); err != nil {
-		db.Close()
 		logFile.Close()
 		lock.Release()
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
@@ -113,9 +117,8 @@ func NewServer() (*Server, error) {
 
 	taskRunner := newDaemonToolRunner()
 	agentRunner := newDaemonAgentRunner(manager)
-	taskManager, err := taskqueue.NewManager(context.Background(), db, taskRunner, agentRunner)
+	taskManager, err := taskqueue.NewManager(context.Background(), writeDB, taskRunner, agentRunner)
 	if err != nil {
-		db.Close()
 		logFile.Close()
 		lock.Release()
 		return nil, err
@@ -139,7 +142,7 @@ func NewServer() (*Server, error) {
 		manager:     manager,
 		tasks:       taskManager,
 		lock:        lock,
-		db:          db,
+		db:          writeDB,
 		stateBroker: stateBroker,
 		taskBroker:  taskBroker,
 		logFile:     logFile,

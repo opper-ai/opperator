@@ -9,9 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"opperator/pkg/db"
 	"opperator/pkg/migration"
-
-	_ "modernc.org/sqlite"
 )
 
 // Store manages UI preferences persisted to sqlite.
@@ -26,24 +25,22 @@ func Open() (*Store, error) {
 	}
 
 	dir := filepath.Join(home, ".config", "opperator")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dbPath := filepath.Join(dir, "opperator.db")
+
+	// Initialize centralized database connection pools
+	if err := db.Initialize(dbPath); err != nil {
 		return nil, err
 	}
 
-	dbPath := filepath.Join(dir, "opperator.db")
-	// Add busy_timeout to wait up to 10 seconds for locks to clear
-	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=10000")
+	writeDB, err := db.GetWriteDB()
 	if err != nil {
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	s := &Store{db: db}
+	s := &Store{db: writeDB}
 
 	// Run migrations automatically
-	migrationRunner := migration.NewRunner(db)
+	migrationRunner := migration.NewRunner(writeDB)
 	if err := migrationRunner.Run(); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
@@ -52,15 +49,17 @@ func Open() (*Store, error) {
 }
 
 func (s *Store) Close() error {
-	if s.db != nil {
-		return s.db.Close()
-	}
 	return nil
 }
 
 func (s *Store) Get(ctx context.Context, key string) (string, error) {
+	readDB, err := db.GetReadDB()
+	if err != nil {
+		return "", err
+	}
+
 	var value string
-	err := s.db.QueryRowContext(ctx,
+	err = readDB.QueryRowContext(ctx,
 		`SELECT value FROM ui_preferences WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {
 		return "", nil

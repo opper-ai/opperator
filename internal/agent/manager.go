@@ -14,10 +14,9 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"opperator/internal/protocol"
+	"opperator/pkg/db"
 	"opperator/pkg/migration"
 	"tui/components/sidebar"
-
-	_ "modernc.org/sqlite"
 )
 
 type StateChangeCallback func(agentName string, changeType string, data interface{})
@@ -47,31 +46,29 @@ func New(configPath string) (*Manager, error) {
 
 	configDir := filepath.Dir(configPath)
 
-	// Open database connection
 	dbPath := filepath.Join(configDir, "opperator.db")
-	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	if err := db.Initialize(dbPath); err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	writeDB, err := db.GetWriteDB()
+	if err != nil {
+		return nil, err
+	}
 
 	// Run migrations
-	migrationRunner := migration.NewRunner(db)
+	migrationRunner := migration.NewRunner(writeDB)
 	if err := migrationRunner.Run(); err != nil {
-		db.Close()
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	persistence := NewAgentPersistence(configDir, db)
+	persistence := NewAgentPersistence(configDir, writeDB)
 
 	// Initialize section store for persisting custom sections using shared DB
-	sectionStore, err := NewSectionStore(db, SectionStoreConfig{
+	sectionStore, err := NewSectionStore(writeDB, SectionStoreConfig{
 		FlushInterval: 5 * time.Second,
 	})
 	if err != nil {
-		db.Close()
 		return nil, fmt.Errorf("failed to initialize section store: %w", err)
 	}
 

@@ -15,34 +15,13 @@ import (
 	"opperator/internal/credentials"
 	"opperator/internal/ipc"
 	"opperator/internal/protocol"
+	"opperator/pkg/db"
 	"tui/opper"
 	"tui/coreagent"
 	"tui/tools"
-
-	_ "modernc.org/sqlite"
 )
 
 const maxFollowUpRounds = 10 // Prevent infinite loops
-
-// execWithRetry executes a database operation with retry on busy/lock errors
-func execWithRetry(ctx context.Context, db *sql.DB, query string, args ...any) error {
-	maxRetries := 3
-	for i := 0; i < maxRetries; i++ {
-		_, err := db.ExecContext(ctx, query, args...)
-		if err == nil {
-			return nil
-		}
-		// Check if it's a lock error
-		if strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY") {
-			if i < maxRetries-1 {
-				time.Sleep(time.Millisecond * 100 * time.Duration(i+1)) // Exponential backoff
-				continue
-			}
-		}
-		return err
-	}
-	return nil
-}
 
 // Styles for CLI output (matching TUI theme)
 var (
@@ -78,22 +57,26 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		return fmt.Errorf("failed to read Opper API key: %w (run: op secret create %s)", err, credentials.OpperAPIKeyName)
 	}
 
-	// Open database
+	// Initialize database
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	dbPath := filepath.Join(home, ".config", "opperator", "opperator.db")
-	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=30000")
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
+	if err := db.Initialize(dbPath); err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
 	}
-	defer db.Close()
 
-	// Set connection pool limits to reduce contention
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	readDB, err := db.GetReadDB()
+	if err != nil {
+		return err
+	}
+
+	writeDB, err := db.GetWriteDB()
+	if err != nil {
+		return err
+	}
 
 	// Load or create conversation
 	var convID, convTitle string
@@ -101,7 +84,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 
 	if conversationID != "" {
 		// Resume existing conversation
-		row := db.QueryRowContext(ctx,
+		row := readDB.QueryRowContext(ctx,
 			`SELECT id, title, active_agent FROM conversations WHERE id = ?`,
 			conversationID)
 		var activeAgent sql.NullString
@@ -115,7 +98,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		}
 
 		// Load message history
-		rows, err := db.QueryContext(ctx,
+		rows, err := readDB.QueryContext(ctx,
 			`SELECT role, metadata FROM messages WHERE session_id = ? ORDER BY id`,
 			conversationID)
 		if err != nil {
@@ -141,7 +124,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		convTitle = titleText
 		convID = fmt.Sprintf("%d", time.Now().UnixNano())
 
-		err = execWithRetry(ctx, db,
+		_, err = writeDB.ExecContext(ctx,
 			`INSERT INTO conversations(id, title, created_at) VALUES(?, ?, ?)`,
 			convID, convTitle, time.Now().Unix())
 		if err != nil {
@@ -214,7 +197,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 	} else {
 		activeAgentValue = agentName
 	}
-	err = execWithRetry(ctx, db,
+	_, err = writeDB.ExecContext(ctx,
 		`UPDATE conversations SET active_agent = ? WHERE id = ?`,
 		activeAgentValue, convID)
 	if err != nil {
@@ -224,7 +207,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 	// Add user message to history and save
 	now := time.Now().Unix()
 	userMetadata := createTextMetadata(messageText)
-	err = execWithRetry(ctx, db,
+	_, err = writeDB.ExecContext(ctx,
 		`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
 		convID, "user", userMetadata, now, now)
 	if err != nil {
@@ -257,7 +240,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 	fmt.Fprintln(os.Stderr, sectionStyle.Render("Response"))
 	fmt.Fprintln(os.Stderr, "")
 
-	finalResponse, err := executeConversationLoop(ctx, client, ipcClient, agentName, history, toolDefs, instructions, db, convID)
+	finalResponse, err := executeConversationLoop(ctx, client, ipcClient, agentName, history, toolDefs, instructions, writeDB, convID)
 	if err != nil {
 		return err
 	}
@@ -282,7 +265,7 @@ func executeConversationLoop(
 	history []conversationMessage,
 	tools []map[string]any,
 	instructions string,
-	db *sql.DB,
+	writeDB *sql.DB,
 	convID string,
 ) (string, error) {
 	currentHistory := append([]conversationMessage{}, history...)
@@ -338,7 +321,7 @@ func executeConversationLoop(
 			if strings.TrimSpace(result.Text) != "" {
 				assistantMetadata := createTextMetadata(result.Text)
 				now := time.Now().Unix()
-				err = execWithRetry(ctx, db,
+				_, err = writeDB.ExecContext(ctx,
 					`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
 					convID, "assistant", assistantMetadata, now, now)
 				if err != nil {
@@ -358,7 +341,7 @@ func executeConversationLoop(
 			// Save assistant message to database
 			assistantMetadata := createTextMetadata(result.Text)
 			now := time.Now().Unix()
-			err = execWithRetry(ctx, db,
+			_, err = writeDB.ExecContext(ctx,
 				`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
 				convID, "assistant", assistantMetadata, now, now)
 			if err != nil {
@@ -376,7 +359,7 @@ func executeConversationLoop(
 			// Save tool call to database
 			toolCallMetadata := createToolCallMetadata(tc)
 			now := time.Now().Unix()
-			err = execWithRetry(ctx, db,
+			_, err = writeDB.ExecContext(ctx,
 				`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
 				convID, "tool_call", toolCallMetadata, now, now)
 			if err != nil {
@@ -399,7 +382,7 @@ func executeConversationLoop(
 			// Save tool result to database
 			toolResponseMetadata := createToolCallResponseMetadata(toolResult.ID, toolResult.Name, toolResult.Output)
 			now := time.Now().Unix()
-			err = execWithRetry(ctx, db,
+			_, err = writeDB.ExecContext(ctx,
 				`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
 				convID, "tool_call_response", toolResponseMetadata, now, now)
 			if err != nil {

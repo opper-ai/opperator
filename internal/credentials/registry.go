@@ -2,57 +2,57 @@ package credentials
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"opperator/pkg/db"
 	"opperator/pkg/migration"
-
-	_ "modernc.org/sqlite"
 )
 
 var errEmptySecretName = errors.New("secret name cannot be empty")
 
-var dbInstance *sql.DB
+var (
+	initOnce sync.Once
+	initErr  error
+)
 
-func getDB() (*sql.DB, error) {
-	if dbInstance != nil {
-		return dbInstance, nil
-	}
+func initDB() error {
+	initOnce.Do(func() {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			initErr = err
+			return
+		}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
+		dir := filepath.Join(home, ".config", "opperator")
+		dbPath := filepath.Join(dir, "opperator.db")
 
-	dir := filepath.Join(home, ".config", "opperator")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
+		if err := db.Initialize(dbPath); err != nil {
+			initErr = err
+			return
+		}
 
-	dbPath := filepath.Join(dir, "opperator.db")
-	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=10000")
-	if err != nil {
-		return nil, err
-	}
+		writeDB, err := db.GetWriteDB()
+		if err != nil {
+			initErr = err
+			return
+		}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+		// Run migrations
+		migrationRunner := migration.NewRunner(writeDB)
+		if err := migrationRunner.Run(); err != nil {
+			initErr = fmt.Errorf("failed to run migrations: %w", err)
+			return
+		}
+	})
 
-	// Run migrations
-	migrationRunner := migration.NewRunner(db)
-	if err := migrationRunner.Run(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
-	}
-
-	dbInstance = db
-	return dbInstance, nil
+	return initErr
 }
 
 func RegisterSecret(name string) error {
@@ -61,7 +61,11 @@ func RegisterSecret(name string) error {
 		return errEmptySecretName
 	}
 
-	db, err := getDB()
+	if err := initDB(); err != nil {
+		return err
+	}
+
+	writeDB, err := db.GetWriteDB()
 	if err != nil {
 		return err
 	}
@@ -69,7 +73,7 @@ func RegisterSecret(name string) error {
 	ctx := context.Background()
 	now := time.Now().Unix()
 
-	_, err = db.ExecContext(ctx,
+	_, err = writeDB.ExecContext(ctx,
 		`INSERT INTO secrets(name, created_at, updated_at) VALUES(?, ?, ?)
 		 ON CONFLICT(name) DO UPDATE SET updated_at = ?`,
 		trimmed, now, now, now)
@@ -82,24 +86,32 @@ func UnregisterSecret(name string) error {
 		return errEmptySecretName
 	}
 
-	db, err := getDB()
+	if err := initDB(); err != nil {
+		return err
+	}
+
+	writeDB, err := db.GetWriteDB()
 	if err != nil {
 		return err
 	}
 
 	ctx := context.Background()
-	_, err = db.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, trimmed)
+	_, err = writeDB.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, trimmed)
 	return err
 }
 
 func ListSecrets() ([]string, error) {
-	db, err := getDB()
+	if err := initDB(); err != nil {
+		return nil, err
+	}
+
+	readDB, err := db.GetReadDB()
 	if err != nil {
 		return nil, err
 	}
 
 	ctx := context.Background()
-	rows, err := db.QueryContext(ctx, `SELECT name FROM secrets ORDER BY name`)
+	rows, err := readDB.QueryContext(ctx, `SELECT name FROM secrets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
