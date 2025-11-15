@@ -615,9 +615,10 @@ var whereCmd = &cobra.Command{
 
 var reloadCmd = &cobra.Command{
 	Use:   "reload",
-	Short: "Reload configuration",
+	Short: "Reload configuration (use --daemon to specify which daemon)",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := cli.ReloadConfig(); err != nil {
+		daemon, _ := cmd.Flags().GetString("daemon")
+		if err := cli.ReloadConfig(daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -927,6 +928,7 @@ func init() {
 	logsCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 	startCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 	restartCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
+	reloadCmd.Flags().String("daemon", "", "Specify daemon to reload (defaults to local)")
 	commandCmd.Flags().String("args", "", "JSON object to pass as command arguments")
 	commandCmd.Flags().Duration("timeout", 10*time.Second, "How long to wait for the command response")
 	commandCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")

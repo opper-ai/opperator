@@ -502,19 +502,82 @@ func (m *Manager) ReloadConfig() error {
 		newAgents[agent.Name] = agent
 	}
 
+	// Collect agents that need to be stopped BEFORE releasing lock
+	// This avoids deadlock when Stop() calls state change callbacks
+	type agentToStop struct {
+		name  string
+		agent *Agent
+	}
+	var agentsToStop []agentToStop
+
+	// Track which agents were running before we stop them
+	// so we can restart them after config reload
+	wasRunningMap := make(map[string]bool)
+
+	// Find agents that need to be stopped
 	for name := range oldAgents {
 		if _, exists := newAgents[name]; !exists {
-			log.Printf("Removing agent: %s", name)
-
 			if process, exists := m.agents[name]; exists {
 				if process.GetStatus() == StatusRunning {
-					process.Stop()
+					agentsToStop = append(agentsToStop, agentToStop{name: name, agent: process})
 				}
-				delete(m.agents, name)
 			}
 		}
 	}
 
+	for name, newAgent := range newAgents {
+		if oldAgent, existed := oldAgents[name]; existed {
+			if !agentConfigEqual(oldAgent, newAgent) {
+				configChanged := !agentConfigEqualIgnoringMetadata(oldAgent, newAgent)
+
+				if agent, exists := m.agents[name]; exists {
+					wasRunning := agent.GetStatus() == StatusRunning
+					// Track running state BEFORE stopping
+					wasRunningMap[name] = wasRunning
+
+					// Only stop if non-metadata config changed
+					if configChanged && wasRunning {
+						agentsToStop = append(agentsToStop, agentToStop{name: name, agent: agent})
+					}
+				}
+			}
+		}
+	}
+
+	// Release lock before stopping agents to avoid deadlock
+	m.mu.Unlock()
+
+	// Stop all agents that need to be stopped (outside the lock)
+	for _, item := range agentsToStop {
+		log.Printf("Stopping agent before config reload: %s", item.name)
+		item.agent.Stop()
+	}
+
+	// Wait for waitForExit goroutines to complete and send their notifications
+	// This prevents deadlock when we reacquire the lock
+	if len(agentsToStop) > 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Reacquire lock to update agent configurations
+	m.mu.Lock()
+
+	// Now remove deleted agents from map
+	for name := range oldAgents {
+		if _, exists := newAgents[name]; !exists {
+			log.Printf("Removing agent: %s", name)
+			delete(m.agents, name)
+		}
+	}
+
+	// Collect agents that need to be started after reload
+	type agentToStart struct {
+		name  string
+		agent *Agent
+	}
+	var agentsToStart []agentToStart
+
+	// Update or add agents
 	for name, newAgent := range newAgents {
 		if oldAgent, existed := oldAgents[name]; existed {
 			// Agent existed before - check if config changed
@@ -525,32 +588,24 @@ func (m *Manager) ReloadConfig() error {
 				metadataChanged := agentMetadataChanged(oldAgent, newAgent)
 				configChanged := !agentConfigEqualIgnoringMetadata(oldAgent, newAgent)
 
-				// Stop old process if running and non-metadata config changed
-				if agent, exists := m.agents[name]; exists {
-					wasRunning := agent.GetStatus() == StatusRunning
-
-					// Only restart if non-metadata config changed
-					if configChanged && wasRunning {
-						agent.Stop()
+				// If non-metadata config changed, create new agent
+				if configChanged {
+					newAgentInstance := NewAgent(newAgent, m.persistence, m.sectionStore)
+					newAgentInstance.stateChangeNotifier = m.notifyStateChange
+					// Restore persistent data
+					if m.persistence != nil {
+						persistentData := m.persistence.GetAgentData(newAgent.Name)
+						newAgentInstance.RestartCount = persistentData.RestartCount
 					}
+					m.agents[name] = newAgentInstance
 
-					// If non-metadata config changed, create new agent
-					if configChanged {
-						agent := NewAgent(newAgent, m.persistence, m.sectionStore)
-						agent.stateChangeNotifier = m.notifyStateChange
-						// Restore persistent data
-						if m.persistence != nil {
-							persistentData := m.persistence.GetAgentData(newAgent.Name)
-							agent.RestartCount = persistentData.RestartCount
-						}
-						m.agents[name] = agent
-
-						// Restart if it was running before
-						if wasRunning {
-							m.agents[name].Start()
-						}
-					} else if metadataChanged {
-						// Only metadata changed - update the agent's config and runtime fields without restart
+					// Schedule restart if it was running before (check map, not current status)
+					if wasRunningMap[name] {
+						agentsToStart = append(agentsToStart, agentToStart{name: name, agent: newAgentInstance})
+					}
+				} else if metadataChanged {
+					// Only metadata changed - update the agent's config and runtime fields without restart
+					if agent, exists := m.agents[name]; exists {
 						agent.Config = newAgent
 
 						// Update runtime metadata fields with proper locking
@@ -588,6 +643,14 @@ func (m *Manager) ReloadConfig() error {
 	}
 
 	m.mu.Unlock()
+
+	// Start all agents that need to be started (outside the lock to avoid deadlock)
+	for _, item := range agentsToStart {
+		log.Printf("Starting agent after config reload: %s", item.name)
+		if err := item.agent.Start(); err != nil {
+			log.Printf("Failed to start agent %s after reload: %v", item.name, err)
+		}
+	}
 
 	// Notify metadata changes after releasing the lock to avoid deadlock
 	for _, change := range metadataChanges {

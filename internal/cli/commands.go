@@ -324,11 +324,16 @@ func StopAllAgents() error {
 	return nil
 }
 
-func ReloadConfig() error {
-	client, err := ipc.NewClientFromRegistry("local")
+func ReloadConfig(daemonName string) error {
+	// Default to local daemon if not specified
+	if daemonName == "" {
+		daemonName = "local"
+	}
+
+	client, err := ipc.NewClientFromRegistry(daemonName)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
-			return fmt.Errorf("daemon is not running. Start it with: op daemon start")
+			return fmt.Errorf("daemon '%s' is not running", daemonName)
 		}
 		return err
 	}
@@ -337,7 +342,7 @@ func ReloadConfig() error {
 	if err := client.ReloadConfig(); err != nil {
 		return err
 	}
-	fmt.Println("Configuration reloaded successfully")
+	fmt.Printf("Configuration reloaded successfully on daemon '%s'\n", daemonName)
 	return nil
 }
 
