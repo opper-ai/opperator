@@ -16,12 +16,12 @@ import (
 	"opperator/internal/ipc"
 	"opperator/internal/protocol"
 	"opperator/pkg/db"
-	"tui/opper"
 	"tui/coreagent"
+	"tui/opper"
 	"tui/tools"
 )
 
-const maxFollowUpRounds = 10 // Prevent infinite loops
+const maxFollowUpRounds = 60 // Prevent infinite loops
 
 // Styles for CLI output (matching TUI theme)
 var (
@@ -47,9 +47,17 @@ var (
 )
 
 // ExecMessage sends a message to an agent and returns the response.
-// Activity is streamed to stderr, final response to stdout.
-func ExecMessage(messageText, agentName, conversationID string) error {
+// Activity is streamed to stderr (or as JSON events), final response to stdout.
+func ExecMessage(messageText, agentName, conversationID string, jsonMode, noSave bool) error {
 	ctx := context.Background()
+
+	// Create the appropriate emitter based on mode
+	var emitter EventEmitter
+	if jsonMode {
+		emitter = NewJSONEmitter()
+	} else {
+		emitter = NewStderrEmitter()
+	}
 
 	// Get API key
 	apiKey, err := credentials.GetSecret(credentials.OpperAPIKeyName)
@@ -124,11 +132,13 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		convTitle = titleText
 		convID = fmt.Sprintf("%d", time.Now().UnixNano())
 
-		_, err = writeDB.ExecContext(ctx,
-			`INSERT INTO conversations(id, title, created_at) VALUES(?, ?, ?)`,
-			convID, convTitle, time.Now().Unix())
-		if err != nil {
-			return fmt.Errorf("failed to create conversation: %w", err)
+		if !noSave {
+			_, err = writeDB.ExecContext(ctx,
+				`INSERT INTO conversations(id, title, created_at) VALUES(?, ?, ?)`,
+				convID, convTitle, time.Now().Unix())
+			if err != nil {
+				return fmt.Errorf("failed to create conversation: %w", err)
+			}
 		}
 	}
 
@@ -161,12 +171,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		}
 
 		// Display core agent info
-		fmt.Fprintln(os.Stderr, labelStyle.Render("Agent:")+" "+valueStyle.Render(coreDef.Name))
-		fmt.Fprintln(os.Stderr, "  "+mutedStyle.Render("Core agent"))
-		if len(toolSpecs) > 0 {
-			fmt.Fprintln(os.Stderr, "  "+mutedStyle.Render(fmt.Sprintf("Tools: %d available", len(toolSpecs))))
-		}
-		fmt.Fprintln(os.Stderr, mutedStyle.Render("────────────────────────────────────────────────"))
+		emitter.PrintAgentInfo(coreDef.Name, AgentTypeCore, "", len(toolSpecs))
 	} else {
 		// Regular agent - get metadata via IPC
 		agentDesc, prompt, promptReplace, commands, err := getAgentMetadataAndCommands(agentName)
@@ -180,14 +185,7 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		toolSpecs = commandsToToolSpecs(agentName, commands)
 
 		// Display agent info
-		fmt.Fprintln(os.Stderr, labelStyle.Render("Agent:")+" "+valueStyle.Render(agentName))
-		if agentDesc != "" {
-			fmt.Fprintln(os.Stderr, "  "+mutedStyle.Render(agentDesc))
-		}
-		if len(toolSpecs) > 0 {
-			fmt.Fprintln(os.Stderr, "  "+mutedStyle.Render(fmt.Sprintf("Tools: %d available", len(toolSpecs))))
-		}
-		fmt.Fprintln(os.Stderr, mutedStyle.Render("────────────────────────────────────────────────"))
+		emitter.PrintAgentInfo(agentName, AgentTypeManaged, agentDesc, len(toolSpecs))
 	}
 
 	// Update conversation active agent (NULL for core agents, agent name for managed agents)
@@ -197,21 +195,25 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 	} else {
 		activeAgentValue = agentName
 	}
-	_, err = writeDB.ExecContext(ctx,
-		`UPDATE conversations SET active_agent = ? WHERE id = ?`,
-		activeAgentValue, convID)
-	if err != nil {
-		return fmt.Errorf("failed to update active agent: %w", err)
+	if !noSave {
+		_, err = writeDB.ExecContext(ctx,
+			`UPDATE conversations SET active_agent = ? WHERE id = ?`,
+			activeAgentValue, convID)
+		if err != nil {
+			return fmt.Errorf("failed to update active agent: %w", err)
+		}
 	}
 
 	// Add user message to history and save
 	now := time.Now().Unix()
 	userMetadata := createTextMetadata(messageText)
-	_, err = writeDB.ExecContext(ctx,
-		`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
-		convID, "user", userMetadata, now, now)
-	if err != nil {
-		return fmt.Errorf("failed to save user message: %w", err)
+	if !noSave {
+		_, err = writeDB.ExecContext(ctx,
+			`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
+			convID, "user", userMetadata, now, now)
+		if err != nil {
+			return fmt.Errorf("failed to save user message: %w", err)
+		}
 	}
 	history = append(history, conversationMessage{Role: "user", Content: messageText})
 
@@ -235,23 +237,45 @@ func ExecMessage(messageText, agentName, conversationID string) error {
 		defer ipcClient.Close()
 	}
 
-	// Stream response with full tool execution loop
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, sectionStyle.Render("Response"))
-	fmt.Fprintln(os.Stderr, "")
+	// Emit session started event
+	agentType := AgentTypeManaged
+	if isCoreAgent {
+		agentType = AgentTypeCore
+	}
+	emitter.EmitSessionStarted(SessionStartedEvent{
+		SessionID:         convID,
+		ConversationTitle: convTitle,
+		AgentName:         agentName,
+		AgentType:         agentType,
+		IsResumed:         conversationID != "",
+		HasHistory:        len(history) > 0,
+		MessageCount:      len(history),
+	})
 
-	finalResponse, err := executeConversationLoop(ctx, client, ipcClient, agentName, history, toolDefs, instructions, writeDB, convID)
+	// Stream response with full tool execution loop
+	emitter.PrintSectionHeader("Response")
+
+	startTime := time.Now()
+	finalResponse, totalTurns, totalToolCalls, err := executeConversationLoop(ctx, client, ipcClient, agentName, history, toolDefs, instructions, writeDB, convID, emitter, noSave)
 	if err != nil {
+		emitter.EmitSessionFailed(SessionFailedEvent{
+			SessionID: convID,
+			Error:     err.Error(),
+		})
 		return err
 	}
+	duration := time.Since(startTime)
 
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, mutedStyle.Render("────────────────────────────────────────────────"))
-	fmt.Fprintln(os.Stderr, mutedStyle.Render("Continue: ")+"op exec --resume "+valueStyle.Render(convID))
-	fmt.Fprintln(os.Stderr, "")
+	// Emit session completed event
+	emitter.EmitSessionCompleted(SessionCompletedEvent{
+		SessionID:      convID,
+		FinalResponse:  finalResponse,
+		TotalTurns:     totalTurns,
+		TotalToolCalls: totalToolCalls,
+		DurationMS:     duration.Milliseconds(),
+	})
 
-	// Write final response to stdout
-	fmt.Println(finalResponse)
+	emitter.PrintResumeInfo(convID)
 
 	return nil
 }
@@ -267,15 +291,26 @@ func executeConversationLoop(
 	instructions string,
 	writeDB *sql.DB,
 	convID string,
-) (string, error) {
+	emitter EventEmitter,
+	noSave bool,
+) (finalResponse string, totalTurns int, totalToolCalls int, err error) {
 	currentHistory := append([]conversationMessage{}, history...)
 	roundCount := 0
+	turnNumber := 0
 
 	for {
 		if roundCount >= maxFollowUpRounds {
-			return "", fmt.Errorf("exceeded maximum follow-up rounds (%d)", maxFollowUpRounds)
+			return "", 0, 0, fmt.Errorf("exceeded maximum follow-up rounds (%d)", maxFollowUpRounds)
 		}
 		roundCount++
+		turnNumber++
+
+		// Emit turn started event
+		emitter.EmitTurnStarted(TurnStartedEvent{
+			SessionID:  convID,
+			TurnNumber: turnNumber,
+			RoundCount: roundCount,
+		})
 
 		// Build conversation for API
 		conversation := buildConversation(currentHistory)
@@ -299,26 +334,32 @@ func executeConversationLoop(
 		}
 
 		// Stream response
+		turnStart := time.Now()
 		events, err := client.Stream(ctx, req)
 		if err != nil {
-			return "", fmt.Errorf("failed to start stream: %w", err)
+			emitter.EmitTurnFailed(TurnFailedEvent{
+				SessionID:  convID,
+				TurnNumber: turnNumber,
+				Error:      err.Error(),
+			})
+			return "", totalTurns, totalToolCalls, fmt.Errorf("failed to start stream: %w", err)
 		}
 
 		// Parse streaming response (no indentation for main agent)
-		result, err := parseStreamingResponse(events, "")
+		result, err := parseStreamingResponse(ctx, events, "", convID, emitter)
 		if err != nil {
-			return "", err
-		}
-
-		// Add newline after streaming text completes
-		if strings.TrimSpace(result.Text) != "" {
-			fmt.Fprintln(os.Stderr, "")
+			emitter.EmitTurnFailed(TurnFailedEvent{
+				SessionID:  convID,
+				TurnNumber: turnNumber,
+				Error:      err.Error(),
+			})
+			return "", totalTurns, totalToolCalls, err
 		}
 
 		// If no tool calls, we're done - return the text
 		if len(result.ToolCalls) == 0 {
 			// Save assistant message if we have text
-			if strings.TrimSpace(result.Text) != "" {
+			if !noSave && strings.TrimSpace(result.Text) != "" {
 				assistantMetadata := createTextMetadata(result.Text)
 				now := time.Now().Unix()
 				_, err = writeDB.ExecContext(ctx,
@@ -328,7 +369,18 @@ func executeConversationLoop(
 					fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save message: %v", err)))
 				}
 			}
-			return result.Text, nil
+
+			// Emit turn completed event
+			turnDuration := time.Since(turnStart)
+			emitter.EmitTurnCompleted(TurnCompletedEvent{
+				SessionID:    convID,
+				TurnNumber:   turnNumber,
+				RoundCount:   roundCount,
+				HasToolCalls: false,
+				DurationMS:   turnDuration.Milliseconds(),
+			})
+
+			return result.Text, turnNumber, totalToolCalls, nil
 		}
 
 		// We have tool calls - save assistant message with text first
@@ -339,13 +391,15 @@ func executeConversationLoop(
 			})
 
 			// Save assistant message to database
-			assistantMetadata := createTextMetadata(result.Text)
-			now := time.Now().Unix()
-			_, err = writeDB.ExecContext(ctx,
-				`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
-				convID, "assistant", assistantMetadata, now, now)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save assistant message: %v", err)))
+			if !noSave {
+				assistantMetadata := createTextMetadata(result.Text)
+				now := time.Now().Unix()
+				_, err = writeDB.ExecContext(ctx,
+					`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
+					convID, "assistant", assistantMetadata, now, now)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save assistant message: %v", err)))
+				}
 			}
 		}
 
@@ -355,21 +409,33 @@ func executeConversationLoop(
 				Role:      "tool_call",
 				ToolCalls: []ToolCall{tc},
 			})
+		}
 
-			// Save tool call to database
-			toolCallMetadata := createToolCallMetadata(tc)
-			now := time.Now().Unix()
-			_, err = writeDB.ExecContext(ctx,
-				`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
-				convID, "tool_call", toolCallMetadata, now, now)
+		// Save all tool calls to database in a single transaction
+		if !noSave {
+			err = db.WithTx(ctx, func(tx *sql.Tx) error {
+				for _, tc := range result.ToolCalls {
+					toolCallMetadata := createToolCallMetadata(tc)
+					now := time.Now().Unix()
+					_, err := tx.ExecContext(ctx,
+						`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
+						convID, "tool_call", toolCallMetadata, now, now)
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			})
 			if err != nil {
-				fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save tool call: %v", err)))
+				fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save tool calls: %v", err)))
 			}
 		}
 
-		// Execute tool calls
-		fmt.Fprintln(os.Stderr, bracketStyle.Render("[")+mutedStyle.Render(fmt.Sprintf("Executing %d tool(s)", len(result.ToolCalls)))+bracketStyle.Render("]"))
-		toolResults := executeToolCalls(ctx, ipcClient, agentName, result.ToolCalls)
+		// Execute tool calls (emitter handles the display)
+		toolResults := executeToolCalls(ctx, ipcClient, agentName, result.ToolCalls, convID, emitter)
+
+		// Track tool call count
+		totalToolCalls += len(result.ToolCalls)
 
 		// Add tool results to history and save to database as "tool_call_response"
 		for _, toolResult := range toolResults {
@@ -378,22 +444,40 @@ func executeConversationLoop(
 				ToolCallID: toolResult.ID,
 				Content:    toolResult.Output,
 			})
+		}
 
-			// Save tool result to database
-			toolResponseMetadata := createToolCallResponseMetadata(toolResult.ID, toolResult.Name, toolResult.Output)
-			now := time.Now().Unix()
-			_, err = writeDB.ExecContext(ctx,
-				`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
-				convID, "tool_call_response", toolResponseMetadata, now, now)
+		// Save all tool results to database in a single transaction
+		if !noSave {
+			err = db.WithTx(ctx, func(tx *sql.Tx) error {
+				for _, toolResult := range toolResults {
+					toolResponseMetadata := createToolCallResponseMetadata(toolResult.ID, toolResult.Name, toolResult.Output)
+					now := time.Now().Unix()
+					_, err := tx.ExecContext(ctx,
+						`INSERT INTO messages(session_id, role, metadata, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
+						convID, "tool_call_response", toolResponseMetadata, now, now)
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			})
 			if err != nil {
-				fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save tool response: %v", err)))
+				fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" "+mutedStyle.Render(fmt.Sprintf("failed to save tool responses: %v", err)))
 			}
 		}
 
+		// Emit turn completed event
+		turnDuration := time.Since(turnStart)
+		emitter.EmitTurnCompleted(TurnCompletedEvent{
+			SessionID:    convID,
+			TurnNumber:   turnNumber,
+			RoundCount:   roundCount,
+			HasToolCalls: true,
+			DurationMS:   turnDuration.Milliseconds(),
+		})
+
 		// Loop continues with updated history
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, veryMutedBracket.Render("[")+veryMutedStyle.Render("Continuing...")+veryMutedBracket.Render("]"))
-		fmt.Fprintln(os.Stderr, "")
+		emitter.PrintContinuing()
 	}
 }
 
@@ -419,10 +503,24 @@ type ToolResult struct {
 }
 
 // parseStreamingResponse parses the SSE stream and extracts text and tool calls
-func parseStreamingResponse(events <-chan opper.SSEEvent, indent string) (StreamResult, error) {
+func parseStreamingResponse(ctx context.Context, events <-chan opper.SSEEvent, indent string, sessionID string, emitter EventEmitter) (StreamResult, error) {
 	var result StreamResult
 	var textBuilder strings.Builder
 	aggregator := opper.NewJSONChunkAggregator()
+
+	// Generate item ID for agent message
+	itemID := fmt.Sprintf("item_%d", time.Now().UnixNano())
+
+	// Emit item started event
+	emitter.EmitItemStarted(ItemEvent{
+		SessionID: sessionID,
+		Item: Item{
+			ID:     itemID,
+			Type:   ItemTypeAgentMessage,
+			Status: "streaming",
+			Text:   "",
+		},
+	})
 
 	// Track if we've started streaming to set color once
 	streamStarted := false
@@ -445,19 +543,31 @@ func parseStreamingResponse(events <-chan opper.SSEEvent, indent string) (Stream
 				if deltaStr, ok := chunk.Delta.(string); ok && deltaStr != "" {
 					if !streamStarted {
 						if indent != "" {
-							fmt.Fprint(os.Stderr, indent)
+							emitter.PrintStreamingText(indent)
 						}
-						fmt.Fprint(os.Stderr, responseColorStart)
+						emitter.PrintStreamingText(responseColorStart)
 						streamStarted = true
 						atLineStart = false // We just printed the indent
 					}
 					textBuilder.WriteString(deltaStr)
+
+					// Emit item updated event
+					emitter.EmitItemUpdated(ItemEvent{
+						SessionID: sessionID,
+						Item: Item{
+							ID:     itemID,
+							Type:   ItemTypeAgentMessage,
+							Status: "streaming",
+							Text:   textBuilder.String(),
+						},
+					})
+
 					// Add indentation at the start of each line
 					for _, ch := range deltaStr {
 						if atLineStart && indent != "" {
-							fmt.Fprint(os.Stderr, indent)
+							emitter.PrintStreamingText(indent)
 						}
-						fmt.Fprint(os.Stderr, string(ch))
+						emitter.PrintStreamingText(string(ch))
 						atLineStart = (ch == '\n')
 					}
 				}
@@ -466,19 +576,31 @@ func parseStreamingResponse(events <-chan opper.SSEEvent, indent string) (Stream
 			// Plain text streaming
 			if !streamStarted {
 				if indent != "" {
-					fmt.Fprint(os.Stderr, indent)
+					emitter.PrintStreamingText(indent)
 				}
-				fmt.Fprint(os.Stderr, responseColorStart)
+				emitter.PrintStreamingText(responseColorStart)
 				streamStarted = true
 				atLineStart = false // We just printed the indent
 			}
 			textBuilder.WriteString(deltaStr)
+
+			// Emit item updated event
+			emitter.EmitItemUpdated(ItemEvent{
+				SessionID: sessionID,
+				Item: Item{
+					ID:     itemID,
+					Type:   ItemTypeAgentMessage,
+					Status: "streaming",
+					Text:   textBuilder.String(),
+				},
+			})
+
 			// Add indentation at the start of each line
 			for _, ch := range deltaStr {
 				if atLineStart && indent != "" {
-					fmt.Fprint(os.Stderr, indent)
+					emitter.PrintStreamingText(indent)
 				}
-				fmt.Fprint(os.Stderr, string(ch))
+				emitter.PrintStreamingText(string(ch))
 				atLineStart = (ch == '\n')
 			}
 		}
@@ -486,7 +608,8 @@ func parseStreamingResponse(events <-chan opper.SSEEvent, indent string) (Stream
 
 	// Reset color at end of stream
 	if streamStarted {
-		fmt.Fprint(os.Stderr, colorReset)
+		emitter.PrintStreamingText(colorReset)
+		emitter.PrintStreamingComplete()
 	}
 
 	result.Text = strings.TrimSpace(textBuilder.String())
@@ -513,17 +636,31 @@ func parseStreamingResponse(events <-chan opper.SSEEvent, indent string) (Stream
 		}
 	}
 
+	// Emit item completed event
+	emitter.EmitItemCompleted(ItemEvent{
+		SessionID: sessionID,
+		Item: Item{
+			ID:     itemID,
+			Type:   ItemTypeAgentMessage,
+			Status: "completed",
+			Text:   result.Text,
+		},
+	})
+
 	return result, nil
 }
 
 // executeToolCalls executes tool calls via IPC or directly for core agents
-func executeToolCalls(ctx context.Context, ipcClient *ipc.Client, agentName string, toolCalls []ToolCall) []ToolResult {
+func executeToolCalls(ctx context.Context, ipcClient *ipc.Client, agentName string, toolCalls []ToolCall, sessionID string, emitter EventEmitter) []ToolResult {
 	results := make([]ToolResult, 0, len(toolCalls))
 
 	// Check if this is a core agent
 	isCoreAgent := ipcClient == nil
 
 	for _, call := range toolCalls {
+		// Generate item ID for this tool call
+		itemID := fmt.Sprintf("item_%d", time.Now().UnixNano())
+
 		// Extract command name from tool name (format: agentName__commandName)
 		commandName := strings.TrimPrefix(call.Name, agentName+"__")
 
@@ -532,18 +669,33 @@ func executeToolCalls(ctx context.Context, ipcClient *ipc.Client, agentName stri
 		if isCoreAgent {
 			displayName = commandName
 		}
-		fmt.Fprintln(os.Stderr, "  "+mutedStyle.Render("→")+" "+labelStyle.Render(displayName))
+
+		// Emit item started event
+		emitter.EmitItemStarted(ItemEvent{
+			SessionID: sessionID,
+			Item: Item{
+				ID:          itemID,
+				Type:        ItemTypeToolCall,
+				Status:      "started",
+				Name:        call.Name,
+				DisplayName: displayName,
+				Arguments:   call.Arguments,
+			},
+		})
+
+		emitter.PrintToolExecution(call.Name, displayName)
 
 		var output string
 		var isError bool
+		startTime := time.Now()
 
 		if isCoreAgent {
 			// Execute core agent tool directly
 			output, isError = executeCoreAgentTool(ctx, call.Name, call.Arguments)
 			if isError {
-				fmt.Fprintln(os.Stderr, "    "+errorStyle.Render("✗")+" "+mutedStyle.Render("failed"))
+				emitter.PrintToolError("failed")
 			} else {
-				fmt.Fprintln(os.Stderr, "    "+successStyle.Render("✓")+" "+mutedStyle.Render("success"))
+				emitter.PrintToolSuccess("success")
 			}
 		} else {
 			// Execute command via IPC (use very long timeout for async commands)
@@ -556,15 +708,18 @@ func executeToolCalls(ctx context.Context, ipcClient *ipc.Client, agentName stri
 					if len(progressLines) > 5 {
 						progressLines = progressLines[len(progressLines)-5:]
 					}
-					// Clear previous lines and redraw
-					fmt.Fprint(os.Stderr, "\r\033[K")  // Clear current line
-					for i := 0; i < len(progressLines)-1; i++ {
-						fmt.Fprint(os.Stderr, "\033[1A\033[K")  // Move up and clear
-					}
-					// Print all progress lines
-					for _, line := range progressLines {
-						fmt.Fprintln(os.Stderr, "    "+mutedStyle.Render(line))
-					}
+					emitter.PrintToolProgress(progressLines)
+
+					// Emit command progress event for JSON mode
+					emitter.EmitCommandProgress(CommandProgressEvent{
+						SessionID: sessionID,
+						ItemID:    itemID,
+						CommandID: call.ID,
+						Progress: CommandProgressData{
+							Text:   prog.Text,
+							Status: prog.Status,
+						},
+					})
 				}
 			}
 			resp, err := ipcClient.InvokeCommandWithProgress(agentName, commandName, call.Arguments, 30*time.Minute, progressFn)
@@ -572,11 +727,11 @@ func executeToolCalls(ctx context.Context, ipcClient *ipc.Client, agentName stri
 			if err != nil {
 				output = fmt.Sprintf("Error: %v", err)
 				isError = true
-				fmt.Fprintln(os.Stderr, "    "+errorStyle.Render("✗")+" "+mutedStyle.Render(err.Error()))
+				emitter.PrintToolError(err.Error())
 			} else if !resp.Success {
 				output = fmt.Sprintf("Command failed: %s", resp.Error)
 				isError = true
-				fmt.Fprintln(os.Stderr, "    "+errorStyle.Render("✗")+" "+mutedStyle.Render(resp.Error))
+				emitter.PrintToolError(resp.Error)
 			} else {
 				// Convert result to string
 				if resp.Result != nil {
@@ -587,20 +742,36 @@ func executeToolCalls(ctx context.Context, ipcClient *ipc.Client, agentName stri
 					lines := strings.Split(output, "\n")
 					displayLines := lines
 					if len(lines) > 5 {
-						fmt.Fprintln(os.Stderr, "    "+mutedStyle.Render(fmt.Sprintf("... (%d lines omitted)", len(lines)-5)))
 						displayLines = lines[len(lines)-5:]
 					}
-					for _, line := range displayLines {
-						if strings.TrimSpace(line) != "" && line != "\"\"" && line != "{}" && line != "null" {
-							fmt.Fprintln(os.Stderr, "    "+mutedStyle.Render(line))
-						}
-					}
+					emitter.PrintToolOutput(displayLines)
 				} else {
 					output = "Command completed successfully"
 				}
-				fmt.Fprintln(os.Stderr, "    "+successStyle.Render("✓")+" "+mutedStyle.Render("success"))
+				emitter.PrintToolSuccess("success")
 			}
 		}
+
+		duration := time.Since(startTime)
+
+		// Emit item completed event
+		itemStatus := "completed"
+		if isError {
+			itemStatus = "failed"
+		}
+		emitter.EmitItemCompleted(ItemEvent{
+			SessionID: sessionID,
+			Item: Item{
+				ID:          itemID,
+				Type:        ItemTypeToolCall,
+				Status:      itemStatus,
+				Name:        call.Name,
+				DisplayName: displayName,
+				Arguments:   call.Arguments,
+				Output:      output,
+				DurationMS:  duration.Milliseconds(),
+			},
+		})
 
 		results = append(results, ToolResult{
 			ID:     call.ID,
@@ -710,7 +881,7 @@ func executeSubAgent(ctx context.Context, arguments map[string]any) (string, boo
 	if err != nil {
 		return fmt.Sprintf("Error: managed agent %s not found or not available: %v", agentName, err), true
 	}
-	_ = agentDesc // Currently unused in this context
+	_ = agentDesc             // Currently unused in this context
 	_ = subAgentPromptReplace // Currently unused in this context
 
 	// Use managed agent
@@ -793,7 +964,9 @@ func executeSubAgentLoop(
 		}
 
 		// Parse streaming response (with 2-space indentation for sub-agent)
-		result, err := parseStreamingResponse(events, "  ")
+		// TODO: Implement proper sub-agent events with subagent_id
+		dummyEmitter := NewStderrEmitter()
+		result, err := parseStreamingResponse(ctx, events, "  ", "", dummyEmitter)
 		if err != nil {
 			return "", err
 		}
@@ -817,7 +990,8 @@ func executeSubAgentLoop(
 
 		// Execute tool calls via IPC
 		fmt.Fprintln(os.Stderr, "  "+bracketStyle.Render("[")+mutedStyle.Render(fmt.Sprintf("Executing %d tool(s)", len(result.ToolCalls)))+bracketStyle.Render("]"))
-		toolResults := executeToolCalls(ctx, ipcClient, agentName, result.ToolCalls)
+		// TODO: Implement proper sub-agent events with subagent_id
+		toolResults := executeToolCalls(ctx, ipcClient, agentName, result.ToolCalls, "", dummyEmitter)
 
 		// Add tool results to history
 		for _, toolResult := range toolResults {

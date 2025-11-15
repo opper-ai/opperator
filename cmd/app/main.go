@@ -885,8 +885,10 @@ Examples:
 		message := args[0]
 		agentName, _ := cmd.Flags().GetString("agent")
 		conversationID, _ := cmd.Flags().GetString("resume")
+		jsonMode, _ := cmd.Flags().GetBool("json")
+		noSave, _ := cmd.Flags().GetBool("no-save")
 
-		if err := cli.ExecMessage(message, agentName, conversationID); err != nil {
+		if err := cli.ExecMessage(message, agentName, conversationID, jsonMode, noSave); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -1010,6 +1012,8 @@ func init() {
 	// Add exec command flags
 	execCmd.Flags().String("agent", "", "Name of the agent to send the message to")
 	execCmd.Flags().String("resume", "", "Resume an existing conversation by ID")
+	execCmd.Flags().Bool("json", false, "Output events as JSON Lines (JSONL) instead of pretty-printing")
+	execCmd.Flags().Bool("no-save", false, "Don't save conversation to database")
 
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(setupCmd)

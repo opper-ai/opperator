@@ -1,5 +1,5 @@
 package llm
 
 const (
-	maxFollowPasses = 20
+	maxFollowPasses = 60
 )
