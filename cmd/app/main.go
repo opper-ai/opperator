@@ -642,14 +642,42 @@ var logsCmd = &cobra.Command{
 }
 
 var commandCmd = &cobra.Command{
-	Use:   "command [name] [command]",
+	Use:   "command [name] [command] [args...]",
 	Short: "Send a command to a managed agent (auto-detects daemon or use --daemon)",
-	Args:  cobra.ExactArgs(2),
+	Long: `Send a command to a managed agent with either natural language arguments or JSON.
+
+Examples:
+  # Natural language arguments (LLM-parsed)
+  op agent command weather-agent get_forecast "from 2nd march to 10th march in London"
+
+  # JSON arguments (precise control)
+  op agent command weather-agent get_forecast --args '{"start":"2024-03-02","end":"2024-03-10","city":"London"}'
+
+  # No arguments
+  op agent command my-agent refresh`,
+	Args: cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		agentName := args[0]
+		commandName := args[1]
+
 		argsJSON, _ := cmd.Flags().GetString("args")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
 		daemon, _ := cmd.Flags().GetString("daemon")
 
+		// Check if raw text args provided (everything after command name)
+		if len(args) > 2 && argsJSON == "" {
+			// Join all remaining args as raw input
+			rawInput := strings.Join(args[2:], " ")
+
+			// Parse using LLM
+			if err := cli.InvokeCommandWithParsing(agentName, commandName, rawInput, timeout, daemon); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		// Fallback to --args JSON mode or no args
 		var payload map[string]interface{}
 		if argsJSON != "" {
 			if err := json.Unmarshal([]byte(argsJSON), &payload); err != nil {
@@ -658,7 +686,7 @@ var commandCmd = &cobra.Command{
 			}
 		}
 
-		if err := cli.InvokeCommand(args[0], args[1], payload, timeout, daemon); err != nil {
+		if err := cli.InvokeCommand(agentName, commandName, payload, timeout, daemon); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

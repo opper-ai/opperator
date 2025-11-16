@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,9 +10,37 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"opperator/config"
+	"opperator/internal/credentials"
 	"opperator/internal/ipc"
+	"opperator/pkg/argparser"
+	"tui/opper"
 )
+
+// Styles for CLI output (matching exec.go styles)
+var (
+	cmdPrimary   = lipgloss.Color("#f7c0af") // orangish/peach
+	cmdSecondary = lipgloss.Color("#3ccad7") // cyan
+	cmdSuccess   = lipgloss.Color("#87bf47") // green
+	cmdError     = lipgloss.Color("#bf5d47") // red
+	cmdMuted     = lipgloss.Color("#7f7f7f") // gray
+)
+
+// getCommandStyles returns styles with proper color profile detection for stderr
+func getCommandStyles() (label, value, muted, success, errorStyle, bracket lipgloss.Style) {
+	// Detect color profile from stderr (not stdout, since that might be redirected)
+	renderer := lipgloss.NewRenderer(os.Stderr)
+
+	label = renderer.NewStyle().Foreground(cmdPrimary).Bold(true)
+	value = renderer.NewStyle().Foreground(cmdSecondary)
+	muted = renderer.NewStyle().Foreground(cmdMuted)
+	success = renderer.NewStyle().Foreground(cmdSuccess)
+	errorStyle = renderer.NewStyle().Foreground(cmdError)
+	bracket = renderer.NewStyle().Foreground(cmdMuted)
+
+	return
+}
 
 // findAgentDaemon searches all daemons to find which one has the specified agent
 // Returns the daemon name, or error if not found or ambiguous
@@ -365,15 +394,158 @@ func InvokeCommand(name, command string, args map[string]interface{}, timeout ti
 		return fmt.Errorf("%s", resp.Error)
 	}
 
-	fmt.Printf("Command '%s' succeeded on agent '%s' (daemon: %s)\n", command, name, foundDaemon)
+	// Get styles with proper stderr detection
+	_, valueStyle, mutedStyle, successStyle, _, _ := getCommandStyles()
+
+	// Activity/status to stderr (styled)
+	fmt.Fprintln(os.Stderr, successStyle.Render("✓")+" Command "+valueStyle.Render("'"+command+"'")+" succeeded on agent "+valueStyle.Render("'"+name+"'")+" "+mutedStyle.Render("(daemon: "+foundDaemon+")"))
+
+	// Result to stdout
 	if resp.Result != nil {
 		if data, err := json.MarshalIndent(resp.Result, "", "  "); err == nil {
 			fmt.Println(string(data))
 		} else {
-			fmt.Printf("Result: %v\n", resp.Result)
+			fmt.Printf("%v\n", resp.Result)
 		}
 	}
 	return nil
+}
+
+// opperClientAdapter adapts tui/opper.Opper to argparser.OpperClient
+type opperClientAdapter struct {
+	client *opper.Opper
+}
+
+func (a *opperClientAdapter) Stream(ctx context.Context, req argparser.StreamRequest) (<-chan argparser.SSEEvent, error) {
+	// Convert argparser.StreamRequest to opper.StreamRequest
+	opperReq := opper.StreamRequest{
+		Name:         req.Name,
+		Instructions: req.Instructions,
+		Input:        req.Input,
+		OutputSchema: req.OutputSchema,
+	}
+
+	// Call the underlying opper client
+	opperEvents, err := a.client.Stream(ctx, opperReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a channel to adapt the events
+	adaptedEvents := make(chan argparser.SSEEvent)
+
+	// Start a goroutine to convert events
+	go func() {
+		defer close(adaptedEvents)
+		for event := range opperEvents {
+			adaptedEvents <- argparser.SSEEvent{
+				Data: argparser.ChunkData{
+					JSONPath:  event.Data.JSONPath,
+					ChunkType: event.Data.ChunkType,
+					Delta:     event.Data.Delta,
+				},
+			}
+		}
+	}()
+
+	return adaptedEvents, nil
+}
+
+// jsonAggregatorAdapter adapts tui/opper.JSONChunkAggregator to argparser.JSONAggregator
+type jsonAggregatorAdapter struct {
+	aggregator *opper.JSONChunkAggregator
+}
+
+func (a *jsonAggregatorAdapter) Add(path string, delta interface{}) {
+	a.aggregator.Add(path, delta)
+}
+
+func (a *jsonAggregatorAdapter) Assemble() (string, error) {
+	return a.aggregator.Assemble()
+}
+
+func InvokeCommandWithParsing(name, command, rawInput string, timeout time.Duration, daemonName string) error {
+	client, foundDaemon, err := getClientForAgent(name, daemonName)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	// Get styles with proper stderr detection
+	labelStyle, valueStyle, mutedStyle, _, _, _ := getCommandStyles()
+
+	// Fetch command descriptors to get the argument schema (stderr)
+	fmt.Fprintln(os.Stderr, mutedStyle.Render("Fetching command schema for")+valueStyle.Render(" '"+command+"' ")+" on agent "+valueStyle.Render("'"+name+"'")+"...")
+	commands, err := client.ListCommands(name)
+	if err != nil {
+		return fmt.Errorf("failed to get command schema: %w", err)
+	}
+
+	// Find the command schema
+	var schema []argparser.CommandArgument
+	for _, cmd := range commands {
+		if cmd.Name == command {
+			// Convert protocol.CommandArgument to argparser.CommandArgument
+			schema = make([]argparser.CommandArgument, len(cmd.Arguments))
+			for i, arg := range cmd.Arguments {
+				schema[i] = argparser.CommandArgument{
+					Name:        arg.Name,
+					Type:        arg.Type,
+					Description: arg.Description,
+					Required:    arg.Required,
+					Default:     arg.Default,
+					Enum:        arg.Enum,
+					Items:       arg.Items,
+					Properties:  arg.Properties,
+				}
+			}
+			break
+		}
+	}
+
+	if schema == nil {
+		return fmt.Errorf("command '%s' not found on agent '%s'", command, name)
+	}
+
+	// If no arguments are expected, just invoke the command directly
+	if len(schema) == 0 {
+		fmt.Fprintln(os.Stderr, mutedStyle.Render("Command")+valueStyle.Render(" '"+command+"' ")+" expects no arguments, invoking directly...")
+		return InvokeCommand(name, command, nil, timeout, daemonName)
+	}
+
+	// Get API key
+	apiKey, err := credentials.GetSecret(credentials.OpperAPIKeyName)
+	if err != nil {
+		return fmt.Errorf("failed to read Opper API key: %w (run: op secret create %s)", err, credentials.OpperAPIKeyName)
+	}
+
+	// Parse the raw input using LLM (stderr)
+	fmt.Fprintln(os.Stderr, labelStyle.Render("Parsing arguments:")+" "+valueStyle.Render("\""+rawInput+"\""))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create Opper client and aggregator with adapters
+	opperClient := &opperClientAdapter{client: opper.New(apiKey)}
+	aggregator := &jsonAggregatorAdapter{aggregator: opper.NewJSONChunkAggregator()}
+
+	args, err := argparser.ParseCommandArguments(ctx, apiKey, rawInput, schema, opperClient, aggregator)
+	if err != nil {
+		return fmt.Errorf("failed to parse arguments: %w", err)
+	}
+
+	// Display parsed arguments (stderr)
+	fmt.Fprintln(os.Stderr, labelStyle.Render("Parsed arguments:"))
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "  "+mutedStyle.Render("(no arguments)"))
+	} else {
+		for k, v := range args {
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", valueStyle.Render(k), valueStyle.Render(fmt.Sprintf("%v", v)))
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+
+	// Now invoke the command with parsed args
+	return InvokeCommand(name, command, args, timeout, foundDaemon)
 }
 
 func ListAgentCommands(name, daemonName string) error {
