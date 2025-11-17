@@ -12,6 +12,20 @@ from .protocol import (
 )
 from .lifecycle import LifecycleManager
 from .secrets import get_secret, SecretError
+from .cli import (
+    ExecClient,
+    ExecResult,
+    ExecEvent,
+    EventType,
+    ItemType,
+    AgentType,
+    Item,
+    CommandResult,
+    command,
+    AgentInvocationError,
+    AgentNotFoundError,
+    DaemonNotRunningError,
+)
 
 __version__ = "1.0.0"
 
@@ -32,4 +46,16 @@ __all__ = [
     'LifecycleManager',
     'get_secret',
     'SecretError',
+    'ExecClient',
+    'ExecResult',
+    'ExecEvent',
+    'EventType',
+    'ItemType',
+    'AgentType',
+    'Item',
+    'CommandResult',
+    'command',
+    'AgentInvocationError',
+    'AgentNotFoundError',
+    'DaemonNotRunningError',
 ]

@@ -26,6 +26,7 @@ from .protocol import (
 )
 from . import secrets as secret_client
 from .lifecycle import LifecycleManager
+from . import cli
 
 
 def _fetch_invocation_directory_from_daemon(timeout: float = 2.0) -> Optional[str]:
@@ -97,6 +98,9 @@ class OpperatorAgent(ABC):
 
         # Sidebar sections
         self._sidebar_sections: Dict[str, Dict[str, Any]] = {}
+
+        # Agent invocation
+        self._exec_client: Optional[cli.ExecClient] = None
 
         # Setup lifecycle handlers
         self.lifecycle.on_shutdown(self._handle_shutdown)
@@ -348,6 +352,117 @@ class OpperatorAgent(ABC):
         """Fetch a named secret from the Opperator daemon."""
 
         return secret_client.get_secret(name, timeout=timeout)
+
+    def _get_exec_client(self) -> cli.ExecClient:
+        """Get or create exec client (lazy initialization)."""
+        if self._exec_client is None:
+            self._exec_client = cli.ExecClient()
+        return self._exec_client
+
+    def invoke_agent(
+        self,
+        agent: str,
+        message: str,
+        timeout: int = 60,
+        save: bool = True,
+        event_callback: Optional[Callable[[Any], None]] = None
+    ) -> str:
+        """Invoke another agent with a message.
+
+        Wrapper around 'op exec <message> --agent=<agent> --json'.
+
+        Args:
+            agent: Target agent name
+            message: Message to send to the agent
+            timeout: Timeout in seconds [not enforced in subprocess mode]
+            save: Whether to save the conversation
+            event_callback: Optional callback for streaming events
+
+        Returns:
+            Agent's response as a string
+
+        Raises:
+            AgentInvocationError: If invocation fails
+
+        Example:
+            result = self.invoke_agent("helper-agent", "What is the weather?")
+            self.log(LogLevel.INFO, f"Helper responded: {result}")
+
+            # With event streaming:
+            def on_event(event):
+                if event.type == EventType.ITEM_UPDATED:
+                    print(f"Streaming: {event.item.text}")
+
+            result = self.invoke_agent("helper-agent", "Hello", event_callback=on_event)
+        """
+        client = self._get_exec_client()
+        result = client.exec(message=message, agent=agent, no_save=not save, event_callback=event_callback)
+
+        if not result.success:
+            raise cli.AgentInvocationError(result.error or "Unknown error")
+
+        return result.response
+
+    def invoke_agent_command(
+        self,
+        agent: str,
+        command: str,
+        args: Optional[Dict[str, Any]] = None,
+        working_dir: Optional[str] = None,
+        timeout: int = 60,
+        progress_callback: Optional[Callable[[str], None]] = None
+    ) -> Any:
+        """Invoke a specific command on another agent.
+
+        This provides low-level access to agent commands, equivalent to:
+        op agent command <agent> <command> --args=<json>
+
+        Use this when you need direct command invocation with full control
+        over arguments and want to handle progress updates.
+
+        Args:
+            agent: Target agent name
+            command: Command name to invoke
+            args: Command arguments as a dictionary
+            working_dir: Working directory for the command
+            timeout: Timeout in seconds (default: 60)
+            progress_callback: Optional callback for progress updates (receives formatted text)
+
+        Returns:
+            Command result (type depends on the command)
+
+        Raises:
+            AgentInvocationError: If invocation fails
+            AgentNotFoundError: If agent doesn't exist
+            DaemonNotRunningError: If daemon is not running
+            TimeoutError: If invocation times out
+
+        Example:
+            # Invoke with progress tracking
+            def on_progress(text):
+                self.update_section("status", text)
+
+            result = self.invoke_agent_command(
+                agent="file-processor",
+                command="process_file",
+                args={"path": "/tmp/data.csv", "format": "json"},
+                progress_callback=on_progress
+            )
+            self.log(LogLevel.INFO, f"Processed: {result}")
+        """
+        result = cli.command(
+            agent=agent,
+            command_name=command,
+            args=args,
+            progress_callback=progress_callback
+        )
+
+        if not result.success:
+            if "not found" in (result.error or "").lower():
+                raise cli.AgentNotFoundError(f"Agent '{agent}' not found: {result.error}")
+            raise cli.AgentInvocationError(result.error or "Unknown error")
+
+        return result.result
 
     def _start_message_reader(self):
         """Start background thread to process incoming messages"""
@@ -705,7 +820,6 @@ class OpperatorAgent(ABC):
                         prop_type = prop_schema.get("type", "string")
                         prop_items = prop_schema.get("items")
                         prop_properties = prop_schema.get("properties")
-                        prop_required = prop_schema.get("required", False)
                         try:
                             coerced_value = self._coerce_argument_value(
                                 prop_type, obj[prop_name], prop_items, prop_properties

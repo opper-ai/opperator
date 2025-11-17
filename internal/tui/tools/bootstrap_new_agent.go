@@ -156,6 +156,7 @@ func RunBootstrapNewAgent(ctx context.Context, arguments string) (string, string
 		"lifecycle.py",
 		"protocol.py",
 		"secrets.py",
+		"cli.py",
 	}
 	for _, fileName := range sdkFiles {
 		embedPath := filepath.Join("python-base/opperator", fileName)
