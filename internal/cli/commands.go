@@ -24,11 +24,14 @@ var (
 	cmdSecondary = lipgloss.Color("#3ccad7") // cyan
 	cmdSuccess   = lipgloss.Color("#87bf47") // green
 	cmdError     = lipgloss.Color("#bf5d47") // red
-	cmdMuted     = lipgloss.Color("#7f7f7f") // gray
+	cmdMuted     = lipgloss.Color("#7f7f7f") // gray (for descriptions)
+	cmdMutedMore = lipgloss.Color("#5f5f5f") // darker gray (for very subtle text)
+	cmdSubtle    = lipgloss.Color("#aaaaaa") // lighter gray (for metadata - more readable)
+	cmdInfo      = lipgloss.Color("#64b5f6") // blue (for remote daemons)
 )
 
 // getCommandStyles returns styles with proper color profile detection for stderr
-func getCommandStyles() (label, value, muted, success, errorStyle, bracket lipgloss.Style) {
+func getCommandStyles() (label, value, muted, success, errorStyle, bracket, info, subtle lipgloss.Style) {
 	// Detect color profile from stderr (not stdout, since that might be redirected)
 	renderer := lipgloss.NewRenderer(os.Stderr)
 
@@ -38,6 +41,8 @@ func getCommandStyles() (label, value, muted, success, errorStyle, bracket lipgl
 	success = renderer.NewStyle().Foreground(cmdSuccess)
 	errorStyle = renderer.NewStyle().Foreground(cmdError)
 	bracket = renderer.NewStyle().Foreground(cmdMuted)
+	info = renderer.NewStyle().Foreground(cmdInfo)
+	subtle = renderer.NewStyle().Foreground(cmdSubtle)
 
 	return
 }
@@ -136,7 +141,8 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool, daemonFilter string)
 		// Connect to daemon
 		client, err := ipc.NewClientWithAuth(daemon.Address, daemon.AuthToken)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to connect to daemon '%s': %v\n", daemon.Name, err)
+			label, _, muted, _, errorStyle, _, _, _ := getCommandStyles()
+			fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" Failed to connect to daemon "+label.Render("'"+daemon.Name+"'")+" "+muted.Render(err.Error()))
 			continue
 		}
 
@@ -144,7 +150,8 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool, daemonFilter string)
 		processes, err := client.ListAgents()
 		client.Close()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to list agents from '%s': %v\n", daemon.Name, err)
+			label, _, muted, _, errorStyle, _, _, _ := getCommandStyles()
+			fmt.Fprintln(os.Stderr, errorStyle.Render("Warning:")+" Failed to list agents from "+label.Render("'"+daemon.Name+"'")+" "+muted.Render(err.Error()))
 			continue
 		}
 
@@ -158,12 +165,33 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool, daemonFilter string)
 	}
 
 	if len(allAgents) == 0 {
-		fmt.Println("No agents configured")
+		_, _, muted, _, _, _, _, _ := getCommandStyles()
+		fmt.Fprintln(os.Stderr, muted.Render("No agents configured"))
 		return nil
 	}
 
-	fmt.Printf("%-15s %-20s %-10s %-10s %-8s %s\n", "DAEMON", "NAME", "STATUS", "PID", "UPTIME", "DESCRIPTION")
-	fmt.Printf("%-15s %-20s %-10s %-10s %-8s %s\n", "------", "----", "------", "---", "------", "-----------")
+	// Get styles
+	label, value, muted, success, errorStyle, _, info, subtle := getCommandStyles()
+
+	// Count running/stopped for summary
+	runningCount := 0
+	stoppedCount := 0
+	crashedCount := 0
+	for _, item := range allAgents {
+		switch string(item.Agent.Status) {
+		case "running":
+			runningCount++
+		case "stopped":
+			stoppedCount++
+		case "crashed":
+			crashedCount++
+		}
+	}
+
+	// Print header with summary
+	fmt.Fprintln(os.Stderr, label.Render("Agents")+muted.Render(fmt.Sprintf(" (%d total, %d running, %d stopped, %d crashed)",
+		len(allAgents), runningCount, stoppedCount, crashedCount)))
+	fmt.Fprintln(os.Stderr, "")
 
 	for _, item := range allAgents {
 		p := item.Agent
@@ -179,26 +207,114 @@ func ListAgents(runningOnly, stoppedOnly, crashedOnly bool, daemonFilter string)
 			continue
 		}
 
+		// Format status with color
 		status := string(p.Status)
-		pid := "-"
+		var statusStyled string
+		switch status {
+		case "running":
+			statusStyled = success.Render("● " + status)
+		case "stopped":
+			statusStyled = muted.Render("○ " + status)
+		case "crashed":
+			statusStyled = errorStyle.Render("✗ " + status)
+		default:
+			statusStyled = muted.Render(status)
+		}
+
+		// Format agent name
+		agentName := value.Render(p.Name)
+
+		// Format daemon with distinct color - use @ prefix and blue for remote daemons only
+		var daemonText string
+		if item.DaemonName != "local" {
+			// Remote daemon: use @ prefix and blue color
+			daemonText = " " + info.Render("@"+item.DaemonName)
+		}
+
+		// Print main line
+		fmt.Fprintf(os.Stderr, "%s %s%s", statusStyled, agentName, daemonText)
+
+		// Add PID and uptime if running
+		var metadata []string
 		if p.PID > 0 {
-			pid = fmt.Sprintf("%d", p.PID)
+			metadata = append(metadata, fmt.Sprintf("pid %d", p.PID))
 		}
-
-		uptime := "-"
 		if p.Uptime > 0 {
-			uptime = fmt.Sprintf("%ds", p.Uptime)
+			uptime := formatUptime(p.Uptime)
+			metadata = append(metadata, fmt.Sprintf("up %s", uptime))
+		}
+		if len(metadata) > 0 {
+			fmt.Fprintf(os.Stderr, " %s", subtle.Render("("+strings.Join(metadata, ", ")+")"))
 		}
 
+		fmt.Fprintln(os.Stderr, "")
+
+		// Print description if available (indented)
 		desc := strings.TrimSpace(p.Description)
-		if desc == "" {
-			desc = "-"
+		if desc != "" {
+			// Wrap description at 80 chars
+			wrapped := wrapText(desc, 80)
+			for _, line := range strings.Split(wrapped, "\n") {
+				fmt.Fprintln(os.Stderr, "  "+muted.Render(line))
+			}
 		}
 
-		fmt.Printf("%-15s %-20s %-10s %-10s %-8s %s\n", item.DaemonName, p.Name, status, pid, uptime, desc)
+		fmt.Fprintln(os.Stderr, "")
 	}
 
 	return nil
+}
+
+// formatUptime formats seconds into a human-readable duration
+func formatUptime(seconds int64) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	} else if seconds < 3600 {
+		return fmt.Sprintf("%dm", seconds/60)
+	} else if seconds < 86400 {
+		hours := seconds / 3600
+		minutes := (seconds % 3600) / 60
+		if minutes > 0 {
+			return fmt.Sprintf("%dh%dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	} else {
+		days := seconds / 86400
+		hours := (seconds % 86400) / 3600
+		if hours > 0 {
+			return fmt.Sprintf("%dd%dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	}
+}
+
+// wrapText wraps text at the specified width
+func wrapText(text string, width int) string {
+	if len(text) <= width {
+		return text
+	}
+
+	var result strings.Builder
+	words := strings.Fields(text)
+	lineLen := 0
+
+	for i, word := range words {
+		wordLen := len(word)
+		if lineLen+wordLen+1 > width && lineLen > 0 {
+			result.WriteString("\n")
+			result.WriteString(word)
+			lineLen = wordLen
+		} else {
+			if i > 0 {
+				result.WriteString(" ")
+				lineLen++
+			}
+			result.WriteString(word)
+			lineLen += wordLen
+		}
+	}
+
+	return result.String()
 }
 
 func StartAgent(name, daemonName string) error {
@@ -395,7 +511,7 @@ func InvokeCommand(name, command string, args map[string]interface{}, timeout ti
 	}
 
 	// Get styles with proper stderr detection
-	_, valueStyle, mutedStyle, successStyle, _, _ := getCommandStyles()
+	_, valueStyle, mutedStyle, successStyle, _, _, _, _ := getCommandStyles()
 
 	// Activity/status to stderr (styled)
 	fmt.Fprintln(os.Stderr, successStyle.Render("✓")+" Command "+valueStyle.Render("'"+command+"'")+" succeeded on agent "+valueStyle.Render("'"+name+"'")+" "+mutedStyle.Render("(daemon: "+foundDaemon+")"))
@@ -472,7 +588,7 @@ func InvokeCommandWithParsing(name, command, rawInput string, timeout time.Durat
 	defer client.Close()
 
 	// Get styles with proper stderr detection
-	labelStyle, valueStyle, mutedStyle, _, _, _ := getCommandStyles()
+	labelStyle, valueStyle, mutedStyle, _, _, _, _, _ := getCommandStyles()
 
 	// Fetch command descriptors to get the argument schema (stderr)
 	fmt.Fprintln(os.Stderr, mutedStyle.Render("Fetching command schema for")+valueStyle.Render(" '"+command+"' ")+" on agent "+valueStyle.Render("'"+name+"'")+"...")
