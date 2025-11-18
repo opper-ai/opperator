@@ -198,6 +198,7 @@ func (m *Model) watchSingleDaemon(ctx context.Context, daemonName string, eventC
 						}
 						sections = append(sections, section)
 					}
+
 				}
 			}
 		}
@@ -534,7 +535,9 @@ func (m *Model) handleInitialPlanItems(msg initialPlanItemsMsg) tea.Cmd {
 			}
 		}
 		m.sidebar.SetTodos(todos)
-		return m.refreshSidebar()
+		// Don't call refreshSidebar here as it triggers another fetch cycle
+		// The view will update automatically on next render
+		return nil
 	}
 
 	return nil
@@ -569,7 +572,9 @@ func (m *Model) handleInitialCustomSections(msg initialCustomSectionsMsg) tea.Cm
 
 	if shouldSetSections && msg.err == nil && msg.sections != nil {
 		m.sidebar.SetCustomSections(msg.sections)
-		return m.refreshSidebar()
+		// Don't call refreshSidebar here as it triggers another fetch cycle
+		// The view will update automatically on next render
+		return nil
 	}
 
 	return nil
