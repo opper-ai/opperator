@@ -11,6 +11,7 @@ type KeyMap struct {
 	New      key.Binding
 	Delete   key.Binding
 	Close    key.Binding
+	Tab      key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -39,6 +40,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("esc", "ctrl+c"),
 			key.WithHelp("esc", "cancel"),
 		),
+		Tab: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "switch focus"),
+		),
 	}
 }
 
@@ -50,6 +55,7 @@ func (k KeyMap) KeyBindings() []key.Binding {
 		k.New,
 		k.Delete,
 		k.Close,
+		k.Tab,
 	}
 }
 
@@ -74,6 +80,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 		k.Select,
 		k.New,
 		k.Delete,
+		k.Tab,
 		k.Close,
 	}
 }
