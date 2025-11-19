@@ -18,6 +18,10 @@ func (m *Model) View() string {
 		return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.toolDetail.View())
 	}
 
+	if m.agentList != nil {
+		return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, m.agentList.View())
+	}
+
 	if ui := m.secretPromptUI(); ui != nil && ui.active() {
 		return m.renderViewWithSecretOverlay()
 	}

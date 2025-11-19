@@ -3,17 +3,18 @@ package tui
 import "github.com/charmbracelet/bubbles/v2/key"
 
 type keyMap struct {
-	Help          key.Binding
-	Quit          key.Binding
-	Newline       key.Binding
-	FocusPrev     key.Binding
-	FocusNext     key.Binding
-	ClearFocus    key.Binding
-	ToggleFocus   key.Binding
-	Cancel        key.Binding
-	Sessions      key.Binding
-	SwitchAgent   key.Binding
-	ToggleSidebar key.Binding
+	Help              key.Binding
+	Quit              key.Binding
+	Newline           key.Binding
+	FocusPrev         key.Binding
+	FocusNext         key.Binding
+	NewConversation   key.Binding
+	OpenConversations key.Binding
+	AgentList         key.Binding
+	Cancel            key.Binding
+	Sessions          key.Binding
+	SwitchAgent       key.Binding
+	ToggleSidebar     key.Binding
 }
 
 // dynamicKeyMap adapts the help bindings based on focus state.
@@ -30,10 +31,10 @@ func (d dynamicKeyMap) ShortHelp() []key.Binding {
 	}
 	keys = append(keys, d.km.Sessions, d.km.SwitchAgent)
 	if d.inputFocused {
-		keys = append(keys, d.km.Newline, d.km.ToggleFocus, d.km.Quit)
+		keys = append(keys, d.km.Newline, d.km.Quit)
 		return keys
 	}
-	keys = append(keys, d.km.FocusPrev, d.km.FocusNext, d.km.ToggleFocus, d.km.ClearFocus, d.km.Quit)
+	keys = append(keys, d.km.FocusPrev, d.km.FocusNext, d.km.Quit)
 	return keys
 }
 
@@ -43,23 +44,23 @@ func (d dynamicKeyMap) FullHelp() [][]key.Binding {
 		if d.cancelVisible {
 			keys = append(keys, d.km.Cancel)
 		}
-		keys = append(keys, d.km.Sessions, d.km.SwitchAgent, d.km.Newline, d.km.ToggleFocus, d.km.Quit)
+		keys = append(keys, d.km.Sessions, d.km.SwitchAgent, d.km.Newline, d.km.Quit)
 		return [][]key.Binding{keys}
 	}
 	keys := []key.Binding{}
 	if d.cancelVisible {
 		keys = append(keys, d.km.Cancel)
 	}
-	keys = append(keys, d.km.Sessions, d.km.SwitchAgent, d.km.FocusPrev, d.km.FocusNext, d.km.ToggleFocus, d.km.ClearFocus, d.km.Quit)
+	keys = append(keys, d.km.Sessions, d.km.SwitchAgent, d.km.FocusPrev, d.km.FocusNext, d.km.Quit)
 	return [][]key.Binding{keys}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Sessions, k.SwitchAgent, k.Newline, k.FocusPrev, k.FocusNext, k.ToggleFocus, k.ClearFocus, k.Quit, k.Cancel}
+	return []key.Binding{k.Help, k.Sessions, k.SwitchAgent, k.Newline, k.FocusPrev, k.FocusNext, k.Quit, k.Cancel}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Help, k.Sessions, k.SwitchAgent, k.Newline, k.FocusPrev, k.FocusNext, k.ToggleFocus, k.ClearFocus, k.Quit, k.Cancel}}
+	return [][]key.Binding{{k.Help, k.Sessions, k.SwitchAgent, k.Newline, k.FocusPrev, k.FocusNext, k.Quit, k.Cancel}}
 }
 
 var defaultKeys = keyMap{
@@ -83,16 +84,16 @@ var defaultKeys = keyMap{
 		key.WithKeys("j", "ctrl+down"),
 		key.WithHelp("j", "focus next msg"),
 	),
-	ClearFocus: key.NewBinding(
-		key.WithKeys("c/y"),
-		key.WithHelp("c/y", "copy content"),
+	OpenConversations: key.NewBinding(
+		key.WithKeys("ctrl+o"),
+		key.WithHelp("ctrl+o", "open chats"),
 	),
-	ToggleFocus: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "toggle focus"),
+	AgentList: key.NewBinding(
+		key.WithKeys("ctrl+a"),
+		key.WithHelp("ctrl+a", "agents"),
 	),
 	Cancel: key.NewBinding(
-		key.WithKeys("esc"),
+		key.WithKeys("ctrl+g", "esc"),
 		key.WithHelp("esc", "cancel"),
 	),
 	Sessions: key.NewBinding(

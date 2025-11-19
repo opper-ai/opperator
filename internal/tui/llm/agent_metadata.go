@@ -33,13 +33,15 @@ type AgentInfo struct {
 	SystemPromptReplace bool
 	Status              string
 	Color               string
+	PID                 int
+	Uptime              string
 	Daemon              string // Which daemon this agent is running on
 }
 
 var (
 	// Cache for agent list with 5 second TTL (only for remote daemons)
 	// Short TTL ensures agent transfers show up quickly in the UI
-	agentListCache = cache.NewTTLCache[string, []AgentInfo](5 * time.Second)
+	agentListCache = cache.NewTTLCache[string, []AgentInfo](500 * time.Millisecond)
 
 	// Cache for agent metadata with 3 second TTL (only for remote daemons)
 	agentMetadataCache = cache.NewTTLCache[string, AgentMetadata](3 * time.Second)
@@ -173,12 +175,14 @@ func listAgentsFromDaemonConfig(ctx context.Context, daemonName string) ([]Agent
 		Success   bool   `json:"success"`
 		Error     string `json:"error"`
 		Processes []struct {
-			Name                string `json:"name"`
-			Description         string `json:"description"`
-			SystemPrompt        string `json:"system_prompt"`
-			SystemPromptReplace bool   `json:"system_prompt_replace,omitempty"`
-			Status              string `json:"status"`
-			Color               string `json:"color"`
+			Name                string      `json:"name"`
+			Description         string      `json:"description"`
+			SystemPrompt        string      `json:"system_prompt"`
+			SystemPromptReplace bool        `json:"system_prompt_replace,omitempty"`
+			Status              string      `json:"status"`
+			Color               string      `json:"color"`
+			PID                 interface{} `json:"pid"`
+			Uptime              interface{} `json:"uptime"`
 		} `json:"processes"`
 	}
 	if err := json.Unmarshal(data, &listResp); err != nil {
@@ -193,6 +197,23 @@ func listAgentsFromDaemonConfig(ctx context.Context, daemonName string) ([]Agent
 
 	agents := make([]AgentInfo, 0, len(listResp.Processes))
 	for _, proc := range listResp.Processes {
+		// Safely handle PID
+		var pid int
+		switch v := proc.PID.(type) {
+		case float64:
+			pid = int(v)
+		case int:
+			pid = v
+		case string:
+			fmt.Sscanf(v, "%d", &pid)
+		}
+
+		// Safely handle Uptime
+		var uptime string
+		if proc.Uptime != nil {
+			uptime = fmt.Sprintf("%v", proc.Uptime)
+		}
+
 		agents = append(agents, AgentInfo{
 			Name:                proc.Name,
 			Description:         proc.Description,
@@ -200,6 +221,8 @@ func listAgentsFromDaemonConfig(ctx context.Context, daemonName string) ([]Agent
 			SystemPromptReplace: proc.SystemPromptReplace,
 			Status:              proc.Status,
 			Color:               proc.Color,
+			PID:                 pid,
+			Uptime:              uptime,
 			// Daemon field will be set by caller
 		})
 	}

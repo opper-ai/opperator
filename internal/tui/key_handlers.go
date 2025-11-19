@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
+	"tui/components/agentlist"
 	cmpconversations "tui/components/conversations"
 )
 
@@ -33,6 +34,7 @@ func defaultKeyHandlers() map[string]keyHandler {
 		"ctrl+j":    handleNewlineKey,
 		"ctrl+s":    handleSessionsKey,
 		"ctrl+b":    handleToggleSidebarKey,
+		"ctrl+a":    handleAgentListKey,
 		"enter":     handleEnterKey,
 		" ":         handleSpaceKey,
 	}
@@ -189,6 +191,10 @@ func handleHistoryNextKey(m *Model, _ keyEventContext) (tea.Cmd, bool) {
 }
 
 func handleEscapeKey(m *Model, ctx keyEventContext) (tea.Cmd, bool) {
+	if m.agentList != nil {
+		m.agentList = nil
+		return nil, true
+	}
 	if m.toolDetail != nil {
 		return m.closeToolDetail(), true
 	}
@@ -272,6 +278,16 @@ func handleToggleSidebarKey(m *Model, _ keyEventContext) (tea.Cmd, bool) {
 
 	// Stats are now updated via event-based updates (agentStateEventMsg)
 
+	return nil, true
+}
+
+func handleAgentListKey(m *Model, _ keyEventContext) (tea.Cmd, bool) {
+	if m.agentList == nil {
+		m.agentList = agentlist.New()
+		m.agentList.SetSize(m.w, m.h)
+		return m.agentList.Init(), true
+	}
+	m.agentList = nil
 	return nil, true
 }
 

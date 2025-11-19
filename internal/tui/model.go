@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/help"
+	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
 
 	"tui/commands"
+	"tui/components/agentlist"
 	cmpconversations "tui/components/conversations"
 	cmpheader "tui/components/header"
 	cmpinput "tui/components/input"
@@ -52,6 +54,7 @@ type UIComponents struct {
 	sidebarVisible     bool
 	status             cmpstatus.StatusCmp
 	convModal          *cmpconversations.Model
+	agentList          *agentlist.Model
 	agentPicker        *agentPicker
 	agentPickerIsFocus bool // true if picker is for /focus command, false for /agent
 	keys               keyMap
@@ -544,6 +547,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, statusCmd)
 	}
 
+	if cmd, handled := m.handleAgentListMsg(msg); handled {
+		return m, tea.Batch(cmd, statusCmd)
+	}
+
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.handleWindowSizeMsg(wsMsg)
 	}
@@ -556,6 +563,51 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	extraCmd := m.handleMessage(msg)
 
 	return m, tea.Batch(componentCmd, extraCmd, statusCmd, m.overlayHelpCmd(), toolCmd)
+}
+
+func (m *Model) handleAgentListMsg(msg tea.Msg) (tea.Cmd, bool) {
+	if m.agentList == nil {
+		return nil, false
+	}
+
+	switch v := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.agentList.SetSize(v.Width, v.Height)
+		return nil, false
+	case tea.KeyMsg:
+		// Allow quitting even when modal is open
+		if key.Matches(v, m.keys.Quit) {
+			return tea.Quit, true
+		}
+
+		// Only close on Esc if NOT filtering
+		if key.Matches(v, m.keys.Cancel) && !m.agentList.IsFiltering() {
+			m.agentList = nil
+			return nil, true
+		}
+
+		// Allow the AgentList key (e.g. ctrl+l) to fall through to handleKeyEvent for toggling
+		if key.Matches(v, m.keys.AgentList) {
+			return nil, false
+		}
+
+		// Delegate all keys to agent list when active
+		newModel, cmd := m.agentList.Update(msg)
+		m.agentList = newModel.(*agentlist.Model)
+		return cmd, true
+	default:
+		// Pass other messages (like refresh results)
+		newModel, cmd := m.agentList.Update(msg)
+		m.agentList = newModel.(*agentlist.Model)
+
+		// If the component produced a command (like a poll request or spinner tick),
+		// we must handle it and stop propagation to avoid it being lost.
+		if cmd != nil {
+			return cmd, true
+		}
+
+		return nil, false
+	}
 }
 
 func (m *Model) handleToolDetailMsg(msg tea.Msg) (tea.Cmd, bool) {
