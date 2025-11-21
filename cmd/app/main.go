@@ -566,6 +566,20 @@ var bootstrapCmd = &cobra.Command{
 	},
 }
 
+var publishAgentCmd = &cobra.Command{
+	Use:   "publish [name]",
+	Short: "Publish an agent to GitHub with a guided wizard",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		skipScan, _ := cmd.Flags().GetBool("skip-scan")
+		if err := cli.PublishAgent(args[0], skipScan); err != nil {
+			// Publish command handles its own error formatting with styled output
+			// Don't print here to avoid duplication
+			os.Exit(1)
+		}
+	},
+}
+
 var deleteCmd = &cobra.Command{
 	Use:   "delete [name]",
 	Short: "Delete an agent and all its data",
@@ -960,6 +974,7 @@ func init() {
 	commandCmd.Flags().String("args", "", "JSON object to pass as command arguments")
 	commandCmd.Flags().Duration("timeout", 10*time.Second, "How long to wait for the command response")
 	commandCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
+	publishAgentCmd.Flags().Bool("skip-scan", false, "Skip the optional Gemini security scan before publishing")
 	listCommandsCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 
 	listCmd.Flags().Bool("running", false, "Only show running agents")
@@ -978,6 +993,7 @@ func init() {
 	agentCmd.AddCommand(stopCmd)
 	agentCmd.AddCommand(restartCmd)
 	agentCmd.AddCommand(bootstrapCmd)
+	agentCmd.AddCommand(publishAgentCmd)
 	agentCmd.AddCommand(deleteCmd)
 	agentCmd.AddCommand(moveCmd)
 	agentCmd.AddCommand(whereCmd)

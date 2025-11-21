@@ -1,0 +1,122 @@
+# {{.AgentName}}
+
+{{.Description}}
+
+---
+
+## About Opperator
+
+Opperator is a terminal-first framework for running local AI agents.
+
+- **Repository**: https://github.com/opper-ai/opperator
+{{if .PackageName}}- **Package**: `{{.PackageName}}`{{end}}
+
+---
+
+## Quick Start
+
+### 1. Install Opperator
+
+If you don't have Opperator installed:
+
+```bash
+curl -fsSL https://opper.ai/opperator-install | bash
+```
+
+### 2. Install this Agent
+
+```bash
+op agent install {{.PackageName}}
+```
+
+**Manual install (available now):**
+
+Clone this repository into your Opperator agents directory:
+
+```bash
+git clone <this-repo> ~/.config/opperator/agents/{{.AgentName}}
+cd ~/.config/opperator/agents/{{.AgentName}}
+```
+
+Create a virtual environment and install dependencies:
+
+```bash
+# Using uv (recommended)
+uv venv .venv
+uv pip install .
+
+# Or using standard Python
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e .
+```
+
+### 3. Configure Required Secrets
+
+{{if .Secrets -}}
+This agent requires the following secrets:
+
+{{range .Secrets}}
+- **`{{.}}`**
+  Create with: `op secret create {{.}}`
+{{end}}
+{{if .HasDynamicSecrets}}
+
+⚠️ **Note**: This agent also uses dynamic `get_secret()` calls. Review the source code to ensure all required secrets are configured.
+{{end}}
+{{else -}}
+No secrets were automatically detected. If your agent needs API keys or credentials, create them with:
+
+```bash
+op secret create <SECRET_NAME>
+```
+{{if .HasDynamicSecrets}}
+
+⚠️ **Note**: This agent uses dynamic `get_secret()` calls. Review the source code to ensure all required secrets are configured.
+{{end}}
+{{end}}
+
+### 4. Register the Agent
+
+Add this configuration to your agents registry at `~/.config/opperator/agents.yaml`:
+
+```yaml
+{{.AgentsYAML}}
+```
+
+### 5. Start the Agent
+
+```bash
+op agent start {{.AgentName}}
+```
+
+---
+
+## Verification
+
+Check that your agent is running:
+
+```bash
+op agent list
+```
+
+View agent logs:
+
+```bash
+op agent logs {{.AgentName}}
+```
+
+---
+
+## Notes
+
+- Virtual environments (`.venv/`), caches (`__pycache__/`), and build artifacts (`build/`, `dist/`) are intentionally excluded from this repository
+- These will be created automatically during installation
+- For troubleshooting, run: `op doctor`
+
+---
+
+## Support
+
+- [Opperator Documentation](https://github.com/opper-ai/opperator)
+- [Report Issues](https://github.com/opper-ai/opperator/issues)

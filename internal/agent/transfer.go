@@ -38,11 +38,12 @@ func identifyAgentSecrets(config *AgentConfig, agentDir string) ([]string, bool,
 	}
 
 	// Pattern to match get_secret("SECRET_NAME") or get_secret('SECRET_NAME')
-	// Also matches ctx.get_secret(...) for Python agents
-	getSecretPattern := regexp.MustCompile(`(?:ctx\.)?get_secret\s*\(\s*["']([^"']+)["']\s*\)`)
+	// Also matches ctx.get_secret(...) and self.get_secret(...) for Python agents
+	// Handles additional parameters like timeout: get_secret("SECRET", timeout=10.0)
+	getSecretPattern := regexp.MustCompile(`(?:(?:ctx|self)\.)?get_secret\s*\(\s*["']([^"']+)["']`)
 
 	// Pattern to detect any get_secret call (including dynamic ones)
-	anyGetSecretPattern := regexp.MustCompile(`(?:ctx\.)?get_secret\s*\(`)
+	anyGetSecretPattern := regexp.MustCompile(`(?:(?:ctx|self)\.)?get_secret\s*\(`)
 
 	// Walk through agent directory to find Python files
 	err := filepath.Walk(agentDir, func(path string, info os.FileInfo, err error) error {
@@ -61,6 +62,10 @@ func identifyAgentSecrets(config *AgentConfig, agentDir string) ([]string, bool,
 			return err
 		}
 		if shouldExcludePath(relPath) {
+			return nil
+		}
+		normalized := filepath.ToSlash(relPath)
+		if strings.HasPrefix(normalized, "opperator/") {
 			return nil
 		}
 
@@ -616,6 +621,10 @@ func shouldExcludePath(relPath string) bool {
 		".mypy_cache",
 		".tox/",
 		".tox",
+		"build/",
+		"build",
+		"dist/",
+		"dist",
 		"*.pyc",
 		"*.pyo",
 		"*.pyd",
