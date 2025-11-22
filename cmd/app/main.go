@@ -580,6 +580,32 @@ var publishAgentCmd = &cobra.Command{
 	},
 }
 
+var installAgentCmd = &cobra.Command{
+	Use:   "install [package]",
+	Short: "Install an agent from GitHub",
+	Long: `Install an agent from a GitHub repository.
+
+Examples:
+  op agent install username/repo-name
+  op agent install https://github.com/username/repo-name
+  op agent install username/repo-name --name custom-name`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		customName, _ := cmd.Flags().GetString("name")
+		force, _ := cmd.Flags().GetBool("force")
+		noStart, _ := cmd.Flags().GetBool("no-start")
+
+		if err := cli.InstallAgent(args[0], cli.InstallOptions{
+			CustomName: customName,
+			Force:      force,
+			NoStart:    noStart,
+		}); err != nil {
+			// Install command handles its own error formatting with styled output
+			os.Exit(1)
+		}
+	},
+}
+
 var deleteCmd = &cobra.Command{
 	Use:   "delete [name]",
 	Short: "Delete an agent and all its data",
@@ -975,6 +1001,9 @@ func init() {
 	commandCmd.Flags().Duration("timeout", 10*time.Second, "How long to wait for the command response")
 	commandCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 	publishAgentCmd.Flags().Bool("skip-scan", false, "Skip the optional Gemini security scan before publishing")
+	installAgentCmd.Flags().String("name", "", "Custom name for the installed agent")
+	installAgentCmd.Flags().Bool("force", false, "Overwrite if agent already exists")
+	installAgentCmd.Flags().Bool("no-start", false, "Don't auto-start after install")
 	listCommandsCmd.Flags().String("daemon", "", "Specify daemon (auto-detects if not provided)")
 
 	listCmd.Flags().Bool("running", false, "Only show running agents")
@@ -994,6 +1023,7 @@ func init() {
 	agentCmd.AddCommand(restartCmd)
 	agentCmd.AddCommand(bootstrapCmd)
 	agentCmd.AddCommand(publishAgentCmd)
+	agentCmd.AddCommand(installAgentCmd)
 	agentCmd.AddCommand(deleteCmd)
 	agentCmd.AddCommand(moveCmd)
 	agentCmd.AddCommand(whereCmd)
