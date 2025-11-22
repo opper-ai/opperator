@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss/v2"
 
+	"tui/highlight"
 	"tui/internal/protocol"
 	"tui/styles"
 	toolregistry "tui/tools/registry"
@@ -92,28 +93,27 @@ func renderAgentCommandResult(def externalAgentCommandDef, call tooltypes.Call, 
 	builder.WriteString(header)
 
 	statusText, statusStyle := agentCommandStatus(meta, result)
+	args := agentCommandArgs(call.Input, def.Arguments)
+
+	// Combine status and args on one line: "Completed (arg1, arg2)"
 	wroteBody := false
-	if statusText != "" {
+	if statusText != "" || len(args) > 0 {
 		builder.WriteString("\n\n")
 		builder.WriteString(prefix)
-		builder.WriteString(truncateWidth(statusStyle.Render(statusText), maxLine))
-		wroteBody = true
-	}
 
-	if args := agentCommandArgs(call.Input, def.Arguments); len(args) > 0 {
-		if wroteBody {
-			builder.WriteString("\n")
-		} else {
-			builder.WriteString("\n\n")
+		var statusLine strings.Builder
+		if statusText != "" {
+			statusLine.WriteString(statusStyle.Render(statusText))
 		}
-		builder.WriteString(prefix)
-		builder.WriteString(truncateWidth(lipgloss.NewStyle().Foreground(t.FgMuted).Render("Args"), maxLine))
-		argStyle := t.S().Base.Foreground(t.FgBase)
-		for _, arg := range args {
-			builder.WriteString("\n")
-			builder.WriteString(prefix)
-			builder.WriteString(truncateWidth(argStyle.Render(arg), maxLine))
+		if len(args) > 0 {
+			argsStr := strings.Join(args, ", ")
+			argStyle := lipgloss.NewStyle().Foreground(t.FgMuted)
+			if statusText != "" {
+				statusLine.WriteString(" ")
+			}
+			statusLine.WriteString(argStyle.Render("(" + argsStr + ")"))
 		}
+		builder.WriteString(truncateWidth(statusLine.String(), maxLine))
 		wroteBody = true
 	}
 
@@ -173,30 +173,21 @@ func agentCommandStatus(meta externalAgentCommandMetadata, result tooltypes.Resu
 	}
 }
 
+const agentCommandResultMaxLines = 10
+
 func agentCommandResultLines(meta externalAgentCommandMetadata, result tooltypes.Result) []string {
 	t := styles.CurrentTheme()
-	detailStyle := t.S().Base.Foreground(t.FgBase)
 	errorStyle := t.S().Base.Foreground(t.Error)
 
 	if trimmed := strings.TrimSpace(result.Content); trimmed != "" {
-		lines := strings.Split(trimmed, "\n")
-		out := make([]string, 0, len(lines))
-		for _, line := range lines {
-			out = append(out, detailStyle.Render(line))
-		}
-		return out
+		return formatJSONOutput(trimmed)
 	}
 
 	if len(meta.Result) > 0 && string(meta.Result) != "null" {
 		var generic any
 		if err := json.Unmarshal(meta.Result, &generic); err == nil {
 			if pretty, err := json.MarshalIndent(generic, "", "  "); err == nil {
-				lines := strings.Split(strings.TrimRight(string(pretty), "\n"), "\n")
-				out := make([]string, 0, len(lines))
-				for _, line := range lines {
-					out = append(out, detailStyle.Render(line))
-				}
-				return out
+				return formatJSONOutput(string(pretty))
 			}
 		}
 	}
@@ -206,10 +197,45 @@ func agentCommandResultLines(meta externalAgentCommandMetadata, result tooltypes
 	}
 
 	if trimmed := strings.TrimSpace(result.Metadata); trimmed != "" {
-		return []string{detailStyle.Render(trimmed)}
+		return formatJSONOutput(trimmed)
 	}
 
 	return nil
+}
+
+func formatJSONOutput(content string) []string {
+	t := styles.CurrentTheme()
+	detailStyle := t.S().Base.Foreground(t.FgBase)
+	content = strings.TrimRight(content, "\n")
+	content = strings.ReplaceAll(content, "\t", "  ")
+
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+
+	// Truncate if needed
+	truncatedCount := 0
+	if totalLines > agentCommandResultMaxLines {
+		lines = lines[:agentCommandResultMaxLines]
+		truncatedCount = totalLines - agentCommandResultMaxLines
+	}
+
+	// Try syntax highlighting for JSON
+	joined := strings.Join(lines, "\n")
+	if highlighted, err := highlight.SyntaxHighlight(joined, "output.json", t.BgBase); err == nil && highlighted != "" {
+		lines = strings.Split(strings.TrimRight(highlighted, "\n"), "\n")
+	} else {
+		// Fallback to plain styling
+		for i, line := range lines {
+			lines[i] = detailStyle.Render(line)
+		}
+	}
+
+	// Add truncation message if needed
+	if truncatedCount > 0 {
+		lines = append(lines, t.S().Muted.Render(fmt.Sprintf("… (%d more lines)", truncatedCount)))
+	}
+
+	return lines
 }
 
 func agentCommandArgs(input string, schema []protocol.CommandArgument) []string {

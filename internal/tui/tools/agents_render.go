@@ -670,9 +670,12 @@ func registerAgentCommandRenderer() {
 			// Build rows for vertical join
 			rows := []string{header, "", statusLine}
 
-			// Add output if available
+			// Add output with syntax highlighting and truncation
 			if output := strings.TrimSpace(result.Content); output != "" {
-				rows = append(rows, "", gutter+output)
+				rows = append(rows, "")
+				for _, line := range formatJSONOutput(output) {
+					rows = append(rows, gutter+line)
+				}
 			}
 
 			// Join all sections vertically
