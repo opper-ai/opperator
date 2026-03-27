@@ -3,6 +3,7 @@ package credentials
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -16,8 +17,12 @@ const (
 // ErrNotFound indicates that a requested secret was not found in the keyring.
 var ErrNotFound = errors.New("secret not found")
 
-// GetSecret retrieves the named secret from the system keyring.
+// GetSecret retrieves the named secret, checking the environment first
+// then falling back to the system keyring.
 func GetSecret(name string) (string, error) {
+	if v := os.Getenv(name); v != "" {
+		return v, nil
+	}
 	secret, err := keyring.Get(serviceName, name)
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
