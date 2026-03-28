@@ -3,6 +3,7 @@ package keyring
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -17,6 +18,9 @@ const (
 var ErrNotFound = errors.New("secret not found")
 
 func GetSecret(name string) (string, error) {
+	if v := os.Getenv(name); v != "" {
+		return v, nil
+	}
 	secret, err := keyring.Get(serviceName, name)
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
